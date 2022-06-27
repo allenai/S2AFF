@@ -1,0 +1,14 @@
+numpy
+scipy
+pandas>=1.3
+blingfire
+scikit-learn
+text_unidecode
+tokenizers==0.11.6
+transformers==4.18.0
+simpletransformers
+awscli
+nltk
+-e https://github.com/kpu/kenlm/archive/master.zip
+hyperopt
+lightgbm

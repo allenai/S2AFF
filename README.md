@@ -18,7 +18,7 @@ Note that this will install a `torch` wihout GPU support. To install a GPU versi
 ## Data
 
 To obtain the training data, run this command after the package is installed (from inside the `S2AFF` directory):  
-```[Expected download size is about XXX GiB]```
+```[Expected download size is about 3.4 GiB]```
 
 `aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
 
@@ -44,12 +44,8 @@ ror_index = RORIndex()  # ditto
 pairwise_model = PairwiseRORLightGBMReranker(ror_index)
 
 # the easiest way to use this package is with the `S2AFF` class.
-ner_predictor = NERPredictor(use_cuda=False)
-ror_index = RORIndex()
-pairwise_model = PairwiseRORLightGBMReranker(ror_index)
-
 s2aff = S2AFF(ner_predictor, ror_index, pairwise_model)
-predictions = s2aff.predict(raw_affiliation)
+predictions = s2aff.predict([raw_affiliation])  # takes lists of strings
 print(predictions)
 
 # alternatively, you can also do it more manually
