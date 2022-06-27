@@ -10,6 +10,7 @@ cd S2AFF
 conda create -y --name s2aff python==3.9.11
 conda activate s2aff
 pip install -e .
+pip install https://github.com/kpu/kenlm/archive/master.zip
 ```
 
 Then you need to install `pytorch` as per instructions here: https://pytorch.org/get-started/locally/
