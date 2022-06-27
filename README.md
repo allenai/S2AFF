@@ -12,7 +12,7 @@ conda activate s2aff
 pip install -e .
 ```
 
-Note that this will install a `torch` wihout GPU support. To install a GPU version, follow instructions here: https://pytorch.org/get-started/locally/
+Then you need to install `pytorch` as per instructions here: https://pytorch.org/get-started/locally/
 
 ## Data
 
