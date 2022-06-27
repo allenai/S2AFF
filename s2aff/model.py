@@ -11,7 +11,6 @@ import lightgbm as lgb
 import kenlm
 from s2aff.text import fix_text
 from s2aff.features import make_lightgbm_features, parse_ror_entry_into_single_string_lightgbm, FEATURE_NAMES
-from scipy.special import softmax
 from simpletransformers.ner import NERModel, NERArgs
 from blingfire import text_to_words
 from s2aff.consts import PATHS
