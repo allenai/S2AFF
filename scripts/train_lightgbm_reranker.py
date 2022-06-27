@@ -215,6 +215,9 @@ def print_val(i, split="train"):
 
 
 train_results = eval_lgb(y_train, X_train, lgb_exp.bst.predict(X_train), group_train)
+val_results = eval_lgb(y_val, X_val, lgb_exp.bst.predict(X_val), group_val)
+test_results = eval_lgb(y_test, X_test, lgb_exp.bst.predict(X_test), group_test)
+
 wrong_ones_train = train_results["group_vec"][np.array(train_results["Prec@1_vec"]) == False]
 wrong_ones_val = val_results["group_vec"][np.array(val_results["Prec@1_vec"]) == False]
 wrong_ones_test = test_results["group_vec"][np.array(test_results["Prec@1_vec"]) == False]
