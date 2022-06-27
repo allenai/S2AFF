@@ -9,7 +9,6 @@ git clone git@github.com:allenai/S2AFF.git
 cd S2AFF
 conda create -y --name s2aff python==3.9.11
 conda activate s2aff
-pip install -r requirements.in
 pip install -e .
 ```
 
@@ -24,7 +23,7 @@ To obtain the training data, run this command after the package is installed (fr
 
 If you run into cryptic errors about GCC on macOS while installing the requirments, try this instead:
 ```bash
-CFLAGS='-stdlib=libc++' pip install -r requirements.in
+CFLAGS='-stdlib=libc++' pip install -e .
 ```
 
 ## Getting Started
