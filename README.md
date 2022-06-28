@@ -22,6 +22,11 @@ pip install https://github.com/kpu/kenlm/archive/master.zip
 
 Then you need to install `pytorch` as per instructions here: https://pytorch.org/get-started/locally/
 
+If you run into cryptic errors about GCC on macOS while installing the requirments, try this instead:
+```bash
+CFLAGS='-stdlib=libc++' pip install -e .
+```
+
 ## Models Download
 
 To obtain the training data and models, run this command after the package is installed (from inside the `S2AFF` directory):  
@@ -29,10 +34,6 @@ To obtain the training data and models, run this command after the package is in
 
 `aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
 
-If you run into cryptic errors about GCC on macOS while installing the requirments, try this instead:
-```bash
-CFLAGS='-stdlib=libc++' pip install -e .
-```
 
 ## Performance on Gold Data
 Included in this repository in the `data` directory is a dataset of some challenging raw affiliation strings that have been manually assigned
