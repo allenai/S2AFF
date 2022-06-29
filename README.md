@@ -115,3 +115,6 @@ reranked_candidates, reranked_scores = pairwise_model.predict(raw_affiliation, c
 for i, j in zip(reranked_candidates[:5], reranked_scores[:5]):
     print(ror_index.ror_dict[i]["name"], j)
 ```
+
+## TODO
+Testing with non-latin-character affiliation strings has not yet been done.
