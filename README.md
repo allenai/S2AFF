@@ -22,14 +22,14 @@ pip install https://github.com/kpu/kenlm/archive/master.zip
 
 Then you need to install `pytorch` as per instructions here: https://pytorch.org/get-started/locally/
 
-If you run into cryptic errors about GCC on macOS while installing the requirments, try this instead:
+If you run into cryptic errors about GCC on macOS while installing the requirements, try this instead:
 ```bash
 CFLAGS='-stdlib=libc++' pip install -e .
 ```
 
 ## Models Download
 
-To obtain the training data and models, run this command after the package is installed (from inside the `S2AFF` directory):  
+To get the models, run this command after the package is installed (from inside the `S2AFF` directory):  
 ```[Expected download size is about 3.4 GiB]```
 
 `aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
@@ -37,8 +37,7 @@ To obtain the training data and models, run this command after the package is in
 
 ## Performance on Gold Data
 Included in this repository in the `data` directory is a dataset of some challenging raw affiliation strings that have been manually assigned
-one or more ROR ids, some of which have no correct RORs at all. Please see `data/gold_affiliations.csv`. The training split of this data has been used to tweak the first 
-stage ROR indexer as well as train the second-stage LightGBM pairwise model.
+one or more ROR ids, and some of which have no correct RORs at all. Please see `data/gold_affiliations.csv`. The training split of this data has been used to tweak the first stage ROR indexer as well as train the second-stage LightGBM pairwise model.
 
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
