@@ -7,6 +7,9 @@ text_unidecode
 simpletransformers
 awscli
 nltk
--e https://github.com/kpu/kenlm/archive/master.zip
+pypi-kenlm
 hyperopt
 lightgbm
+torch
+pydantic
+pytest
