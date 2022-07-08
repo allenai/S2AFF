@@ -30,7 +30,7 @@ class Instance(BaseModel):
     """
 
     raw_affiliation: str = Field(description="Raw affiliation string")
-    # field2: float = Field(description="Some other field of consequence")
+
 
 
 class Prediction(BaseModel):
@@ -117,14 +117,6 @@ class Predictor:
                 address=prediction["address_from_ner"],
             )
         return prediction_instance
-
-    def predict_one(self, instance: Instance) -> Prediction:
-        """
-        Should produce a single Prediction for the provided Instance.
-        Leverage your underlying model to perform this inference.
-        """
-        predictions = self.s2aff.predict([instance.raw_affiliation])
-        return self.convert_raw_prediction_to_Prediction(predictions[0])
 
     def predict_batch(self, instances: List[Instance]) -> List[Prediction]:
         """
