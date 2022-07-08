@@ -11,4 +11,5 @@ setuptools.setup(
     url="https://github.com/allenai/S2AFF",
     packages=setuptools.find_packages(),
     install_requires=requirements,  # dependencies specified in requirements.in
+    description='Semantic Scholar\'s Affiliation Extraction: Link Your Raw Affiliations to ROR IDs',
 )
