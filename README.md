@@ -115,5 +115,10 @@ for i, j in zip(reranked_candidates[:5], reranked_scores[:5]):
     print(ror_index.ror_dict[i]["name"], j)
 ```
 
+## Why Not Rerank with BERT?
+Because it's worse! We couldn't make `roberta-large` any better than what you see below (validation scores).
+![image](https://user-images.githubusercontent.com/1874668/178345697-6af8311d-416e-4540-8489-6eb2eca4186c.png)
+
+
 ## TODO
 Testing with non-latin-character affiliation strings has not yet been done.
