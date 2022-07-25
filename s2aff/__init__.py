@@ -82,24 +82,30 @@ class S2AFF:
         for raw_affiliation, ner_prediction in zip(raw_affiliations, ner_predictions):
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
             candidates, scores = self.ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
-            reranked_candidates, reranked_scores = self.pairwise_model.predict(
-                raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
-            )
-            # apply threshold to reranked scores
-            if len(reranked_candidates) == 0:
+            if len(candidates) == 0:
                 output_scores_and_thresh = [self.no_ror_output_text], [0.0]
-            elif len(reranked_candidates) == 1:
-                if reranked_scores[0] < self.pairwise_model_threshold:
-                    output_scores_and_thresh = [self.no_ror_output_text], [0.0]
-                else:
-                    output_scores_and_thresh = (reranked_candidates, reranked_scores)
             else:
-                delta = reranked_scores[0] - reranked_scores[1]
-                if reranked_scores[0] < self.pairwise_model_threshold and delta < self.pairwise_model_delta_threshold:
+                reranked_candidates, reranked_scores = self.pairwise_model.predict(
+                    raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
+                )
+                # apply threshold to reranked scores
+                if len(reranked_candidates) == 0:
                     output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                elif len(reranked_candidates) == 1:
+                    if reranked_scores[0] < self.pairwise_model_threshold:
+                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                    else:
+                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
                 else:
-                    output_scores_and_thresh = (reranked_candidates, reranked_scores)
-            # make a dict of outputs
+                    delta = reranked_scores[0] - reranked_scores[1]
+                    if (
+                        reranked_scores[0] < self.pairwise_model_threshold
+                        and delta < self.pairwise_model_delta_threshold
+                    ):
+                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                    else:
+                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
+                # make a dict of outputs
             output = {
                 "raw_affiliation": raw_affiliation,
                 "ner_prediction": ner_prediction,
