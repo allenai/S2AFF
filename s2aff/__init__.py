@@ -29,8 +29,10 @@ class S2AFF:
         if the difference between the top two scores is below this threshold and
         the top score is below the threshold (previous param) then there is no ROR match
         default = 0.2, found in `scripts/analyze_thresholds.ipynb`
-    :param no_ror_output_text: the text to return if no ROR is found
+    :param no_ror_output_text: the text to return if no ROR is found due to thereshold
         default = "NO_ROR_FOUND"
+    :param no_candidates_output_text: the text to return if no candidates are found in the first stage
+        default = "NO_CANDIDATES_FOUND"
     :param number_of_top_candidates_to_return: the number of top candidates to return in the second stage of the algorithm
         a convenience to reduce the total amount of data sent
         default = 5
@@ -45,6 +47,7 @@ class S2AFF:
         pairwise_model_threshold=0.3,
         pairwise_model_delta_threshold=0.2,
         no_ror_output_text="NO_ROR_FOUND",
+        no_candidates_output_text="NO_CANDIDATES_FOUND",
         number_of_top_candidates_to_return=5,
     ):
         self.ner_predictor = ner_predictor
@@ -54,6 +57,7 @@ class S2AFF:
         self.pairwise_model_threshold = pairwise_model_threshold
         self.pairwise_model_delta_threshold = pairwise_model_delta_threshold
         self.no_ror_output_text = no_ror_output_text
+        self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
 
     def predict(self, raw_affiliations):
@@ -83,14 +87,14 @@ class S2AFF:
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
             candidates, scores = self.ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
             if len(candidates) == 0:
-                output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
             else:
                 reranked_candidates, reranked_scores = self.pairwise_model.predict(
                     raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
                 )
                 # apply threshold to reranked scores
                 if len(reranked_candidates) == 0:
-                    output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                    output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
                 elif len(reranked_candidates) == 1:
                     if reranked_scores[0] < self.pairwise_model_threshold:
                         output_scores_and_thresh = [self.no_ror_output_text], [0.0]
