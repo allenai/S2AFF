@@ -121,4 +121,6 @@ Because it's worse! We couldn't make `roberta-large` any better than what you se
 
 
 ## TODO
-Testing with non-latin-character affiliation strings has not yet been done.
+S2AFF has not been trained to deal with non-English affiliations. It may work for some latin-character languages, but it may not.
+If this model is deployed, a language detector should first be applied to the affiliation strings. Then, an analysis will need to be done
+to determine which languages will be too error-prone.
