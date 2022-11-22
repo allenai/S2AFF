@@ -41,9 +41,11 @@ one or more ROR ids, and some of which have no correct RORs at all. Please see `
 
 Data sizes:
 
-train |    1132
-test  |   644
-val   |   588
+| split | n samples |
+|:------|:----------|
+| train |    1132|
+|test  |   644 |
+|val   |   588 |
 
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
