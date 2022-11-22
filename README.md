@@ -39,6 +39,12 @@ To get the models, run this command after the package is installed (from inside 
 Included in this repository in the `data` directory is a dataset of some challenging raw affiliation strings that have been manually assigned
 one or more ROR ids, and some of which have no correct RORs at all. Please see `data/gold_affiliations.csv`. The training split of this data has been used to tweak the first stage ROR indexer as well as train the second-stage LightGBM pairwise model.
 
+Data sizes:
+
+train |    1132
+test  |   644
+val   |   588
+
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
 
