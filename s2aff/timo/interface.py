@@ -45,11 +45,11 @@ class Prediction(BaseModel):
     """
 
     ror_id: str = Field(description="ROR id for the top result")
+    display_name: str = Field(description="Standardized name for the top result")
     score: float = Field(description="Score from the LightGBM stage model for the top result")
     main: List[str] = Field(description="Main affiliation strings from NER step")
     child: List[str] = Field(description="Child affiliation strings from NER step")
     address: List[str] = Field(description="Address affiliation strings from NER step")
-
 
 class PredictorConfig(BaseSettings):
     """
@@ -111,11 +111,13 @@ class Predictor:
         else:
             prediction_instance = Prediction(
                 ror_id=prediction["stage2_candidates"][0],
+                display_name=prediction["top_candidate_display_name"]
                 score=prediction["stage2_scores"][0],
                 main=prediction["main_from_ner"],
                 child=prediction["child_from_ner"],
                 address=prediction["address_from_ner"],
             )
+
         return prediction_instance
 
     def predict_batch(self, instances: List[Instance]) -> List[Prediction]:

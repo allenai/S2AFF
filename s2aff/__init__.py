@@ -1,5 +1,6 @@
 import logging
 from s2aff.model import parse_ner_prediction
+from s2aff.ror import RORIndex
 
 logger = logging.getLogger("s2aff")
 logger.setLevel(logging.INFO)
@@ -59,6 +60,7 @@ class S2AFF:
         self.no_ror_output_text = no_ror_output_text
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
+        self.ror_index = RORIndex()
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
@@ -120,7 +122,8 @@ class S2AFF:
                 "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
+                "top_candidate_display_name": self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
             }
-            outputs.append(output)
 
+            outputs.append(output)
         return outputs
