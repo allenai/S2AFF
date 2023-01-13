@@ -120,7 +120,8 @@ class S2AFF:
                 "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
+                "top_candidate_display_name": self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
             }
-            outputs.append(output)
 
+            outputs.append(output)
         return outputs
