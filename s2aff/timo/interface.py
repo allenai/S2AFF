@@ -111,7 +111,7 @@ class Predictor:
         else:
             prediction_instance = Prediction(
                 ror_id=prediction["stage2_candidates"][0],
-                display_name=prediction["top_candidate_display_name"]
+                display_name=prediction["top_candidate_display_name"],
                 score=prediction["stage2_scores"][0],
                 main=prediction["main_from_ner"],
                 child=prediction["child_from_ner"],

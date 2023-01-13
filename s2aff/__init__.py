@@ -1,6 +1,5 @@
 import logging
 from s2aff.model import parse_ner_prediction
-from s2aff.ror import RORIndex
 
 logger = logging.getLogger("s2aff")
 logger.setLevel(logging.INFO)
@@ -60,7 +59,6 @@ class S2AFF:
         self.no_ror_output_text = no_ror_output_text
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
-        self.ror_index = RORIndex()
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
