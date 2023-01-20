@@ -396,7 +396,7 @@ class RORIndex:
             )
 
         if len(ranked_unique) == 0:
-            return []
+            return [], []
 
         # if we have address text, we can find the RORs that have at least one word in that text
         if address != "" and len(address) > 0:
