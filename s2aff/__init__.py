@@ -109,7 +109,12 @@ class S2AFF:
                         output_scores_and_thresh = [self.no_ror_output_text], [0.0]
                     else:
                         output_scores_and_thresh = (reranked_candidates, reranked_scores)
-                # make a dict of outputs
+            try:
+                display_name = self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
+            except:
+                display_name = ""
+
+            # make a dict of outputs
             output = {
                 "raw_affiliation": raw_affiliation,
                 "ner_prediction": ner_prediction,
@@ -120,7 +125,7 @@ class S2AFF:
                 "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
-                "top_candidate_display_name": self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
+                "top_candidate_display_name": display_name
             }
 
             outputs.append(output)
