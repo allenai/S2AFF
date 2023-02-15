@@ -13,9 +13,11 @@ except NameError:
 
 CACHE_ROOT = Path(os.getenv("S2AFF_CACHE", str(Path.home() / ".s2aff")))
 
+ROR_VERSION = "v1.18-2023-01-26"
+
 PATHS = {
     "ner_training_data": os.path.join(PROJECT_ROOT_PATH, "data", "ner_training_data.pickle"),
-    "ror_data": os.path.join(PROJECT_ROOT_PATH, "data", "v1.1-2022-06-16-ror-data.json"),
+    "ror_data": os.path.join(PROJECT_ROOT_PATH, "data", f"{ROR_VERSION}-ror-data.json"),
     "country_info": os.path.join(PROJECT_ROOT_PATH, "data", "country_info.txt"),
     "openalex_works_counts": os.path.join(PROJECT_ROOT_PATH, "data", "openalex_works_counts.csv"),
     "gold_affiliation_annotations": os.path.join(PROJECT_ROOT_PATH, "data", "gold_affiliation_annotations.csv"),
