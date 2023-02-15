@@ -23,6 +23,7 @@ ABBREVIATION_DICTIONARY = {
     "Faculty": "Fac",
     "Foundation": "Found",
     "Government": "Gov",
+    "Incorporated": "Inc",
     "Information": "Info",
     "Institute": "Inst",
     "International": "Intern",

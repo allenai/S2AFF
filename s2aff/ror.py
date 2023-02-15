@@ -131,6 +131,17 @@ class RORIndex:
             for key in self.ror_dict.keys():
                 self.ror_dict[key]["works_count"] = self.works_counts.get(key, 0)
 
+        # some special cases
+        # for AI2
+        if "https://ror.org/05w520734" in self.ror_dict:
+            if "Allen Institute for AI" not in self.ror_dict["https://ror.org/05w520734"]["aliases"]:
+                self.ror_dict["https://ror.org/05w520734"]["aliases"].append("Allen Institute for AI")
+
+        # a crazy alias that we have to delete
+        if "https://ror.org/04mznrw11" in self.ror_dict:
+            if "Institute of Technology" in self.ror_dict["https://ror.org/04mznrw11"]["aliases"]:
+                self.ror_dict["https://ror.org/04mznrw11"]["aliases"].remove("Institute of Technology")
+
         # we need some indices for fetching first order candidates
         ror_ngrams_inverted_index = defaultdict(set)
         ror_ngrams_lengths_index = {}

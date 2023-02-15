@@ -34,6 +34,14 @@ To get the models, run this command after the package is installed (from inside 
 
 `aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
 
+## Updating the ROR Database
+The ROR json database is stored in `data`. To update it you have to do the following:
+
+1. Download the latest ROR database zip from https://zenodo.org/record/7574659
+2. Unzip the json into the `data` directory.
+3. In `s2aff/constants.py` there is a variable called `PATHS` with an entry for the `ror_data`. Update it to the new ROR json path
+4. Run `scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex.
+5. [If you work at AI2] Upload the new ROR json and the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
 
 ## Performance on Gold Data
 Included in this repository in the `data` directory is a dataset of some challenging raw affiliation strings that have been manually assigned

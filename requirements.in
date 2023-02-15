@@ -6,6 +6,7 @@ scikit-learn
 text_unidecode
 simpletransformers
 awscli
+boto3
 nltk
 pypi-kenlm
 hyperopt
