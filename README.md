@@ -39,7 +39,7 @@ The ROR json database is stored in `data`. To update it you have to do the follo
 
 1. Download the latest ROR database zip from https://zenodo.org/record/7574659
 2. Unzip the json into the `data` directory.
-3. In `s2aff/constants.py` there is a variable called `PATHS` with an entry for the `ror_data`. Update it to the new ROR json path
+3. In `s2aff/constants.py` there is a variable called `ROR_VERSION`. Update it to the new ROR version as per the filename.
 4. Run `scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex.
 5. [If you work at AI2] Upload the new ROR json and the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
 

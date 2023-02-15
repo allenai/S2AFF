@@ -28,7 +28,7 @@ works_count_dict = {}
 for page in pages:
     for obj in page["Contents"]:
         if obj["Key"].startswith("part") and obj["Key"].endswith(".gz"):
-            print("Workong on", obj["Key"])
+            print("Working on", obj["Key"])
             obj = s3.get_object(Bucket=bucket, Key=obj["Key"])
             with gzip.GzipFile(fileobj=BytesIO(obj["Body"].read())) as f:
                 for line in f:
