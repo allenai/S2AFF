@@ -132,15 +132,17 @@ class RORIndex:
                 self.ror_dict[key]["works_count"] = self.works_counts.get(key, 0)
 
         # some special cases
-        # for AI2
-        if "https://ror.org/05w520734" in self.ror_dict:
-            if "Allen Institute for AI" not in self.ror_dict["https://ror.org/05w520734"]["aliases"]:
-                self.ror_dict["https://ror.org/05w520734"]["aliases"].append("Allen Institute for AI")
-
-        # a crazy alias that we have to delete
-        if "https://ror.org/04mznrw11" in self.ror_dict:
-            if "Institute of Technology" in self.ror_dict["https://ror.org/04mznrw11"]["aliases"]:
-                self.ror_dict["https://ror.org/04mznrw11"]["aliases"].remove("Institute of Technology")
+        with open(PATHS["ror_edits"], "r") as f:
+            for line in f:
+                line_json = json.loads(line)
+                if line_json["ror_id"] in self.ror_dict:
+                    print("Editing ROR database", line_json)
+                    if line_json["action"] == "append":
+                        if line_json["value"] not in self.ror_dict[line_json["ror_id"]][line_json["key"]]:
+                            self.ror_dict[line_json["ror_id"]][line_json["key"]].append(line_json["value"])
+                    elif line_json["action"] == "remove":
+                        if line_json["value"] in self.ror_dict[line_json["ror_id"]][line_json["key"]]:
+                            self.ror_dict[line_json["ror_id"]][line_json["key"]].remove(line_json["value"])
 
         # we need some indices for fetching first order candidates
         ror_ngrams_inverted_index = defaultdict(set)
