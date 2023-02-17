@@ -144,6 +144,34 @@ class RORIndex:
                         if line_json["value"] in self.ror_dict[line_json["ror_id"]][line_json["key"]]:
                             self.ror_dict[line_json["ror_id"]][line_json["key"]].remove(line_json["value"])
 
+        # works_count came from OpenAlex and it has some errors
+        # fixing them here by swapping works_count between parent ROR and child ROR
+        # when the child ROR has suspiciously way more works_count AND the parent and child names are
+        # name (location_1) and name (location_2)
+        swaps_record = []
+        for i in range(2):  # have to do this twice because there are multi-level hierarchies
+            for ror_id in self.ror_dict.keys():
+                parent_works_count = self.ror_dict[ror_id]["works_count"]
+                parent_name = self.ror_dict[ror_id]["name"]
+                relationships = self.ror_dict[ror_id]["relationships"]
+                relationships = sorted(relationships, key=lambda x: -self.ror_dict[x["id"]]["works_count"])
+                for rel in relationships:
+                    if rel["type"] == "Child":
+                        child_id = rel["id"]
+                        child_entry = self.ror_dict[child_id]
+                        child_name = child_entry["name"]
+                        child_works_count = child_entry["works_count"]
+
+                        # we only care about the ones where the names are the same EXCEPT anything in parentheses
+                        name_no_parens = parent_name.split("(")[0].strip()
+                        child_name_no_parens = child_name.split("(")[0].strip()
+                        if name_no_parens == child_name_no_parens:
+                            if child_works_count > parent_works_count:
+                                self.ror_dict[ror_id]["works_count"] = child_works_count
+                                self.ror_dict[child_id]["works_count"] = parent_works_count
+                                swaps_record.append((parent_name, child_name))
+                                break  # we sorted so this swap is only necessary once
+
         # we need some indices for fetching first order candidates
         ror_ngrams_inverted_index = defaultdict(set)
         ror_ngrams_lengths_index = {}

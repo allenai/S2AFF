@@ -80,10 +80,16 @@ class S2AFF:
         if isinstance(raw_affiliations, str):
             raw_affiliations = [raw_affiliations]
 
+        print("Getting NER predictions in bulk...")
         ner_predictions = self.ner_predictor.predict(raw_affiliations)
+        print("Done")
 
         outputs = []
-        for raw_affiliation, ner_prediction in zip(raw_affiliations, ner_predictions):
+        for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
+            print(
+                f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
+                end="\r",
+            )
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
             candidates, scores = self.ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
             if len(candidates) == 0:
@@ -125,7 +131,7 @@ class S2AFF:
                 "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
-                "top_candidate_display_name": display_name
+                "top_candidate_display_name": display_name,
             }
 
             outputs.append(output)
