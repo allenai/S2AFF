@@ -1,4 +1,5 @@
 import json
+import re
 from collections import Counter, defaultdict
 from operator import itemgetter
 from random import shuffle
@@ -23,6 +24,10 @@ from s2aff.consts import (
     SCORE_BASED_EARLY_CUTOFF,
 )
 from s2aff.file_cache import cached_path
+
+
+grid_extractor = re.compile(r"(grid\.\d{4,6}\.[0-9a-f]{1,2})")
+isni_extractor = re.compile(r"(?=(\d{4}\s{0,1}\d{4}\s{0,1}\d{4}\s{0,1}[xX\d]{4}))")
 
 
 def get_special_tokens_dict():
@@ -131,7 +136,16 @@ class RORIndex:
             for key in self.ror_dict.keys():
                 self.ror_dict[key]["works_count"] = self.works_counts.get(key, 0)
 
-        # some special cases
+        self.grid_to_ror = {}
+        self.isni_to_ror = {}
+        for r in ror:
+            if "GRID" in r["external_ids"]:
+                self.grid_to_ror[r["external_ids"]["GRID"]["preferred"]] = r["id"]
+            if 'ISNI' in r["external_ids"]:
+                for isni in r["external_ids"]["ISNI"]["all"]:
+                    self.isni_to_ror[isni.replace(' ', '')] = r["id"]
+
+        # ROR database has some issues so we'll edit it directly
         with open(PATHS["ror_edits"], "r") as f:
             for line in f:
                 line_json = json.loads(line)
@@ -319,13 +333,15 @@ class RORIndex:
         self.ror_name_direct_lookup = ror_name_direct_lookup
         self.inverse_dict_fixed = inverse_dict_fixed
 
-    def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor):
+    def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor, look_for_grid_and_isni=True):
         """A wrapper function that puts the raw affiliation string through the
         NER predictor, parses the predicted output, and fetches the ROR candidates.
 
         Args:
             raw_affiliation (str): the raw affiliation string
             ner_predictor (NERPredictor): a model that can predict named affiliation entities
+            look_for_grid_and_isni (bool): whether to look for GRID and ISNI IDs in the raw affiliation string
+                Defalts to True. If found, just returns that candidate as the only one.
 
         Returns:
             candidates (list strings) - list of ROR inds in decreasing order of likelihood
@@ -334,6 +350,13 @@ class RORIndex:
             Note that the candidates are sometimes *not* fully sorted by score because arbitrarily
             scored candidates are inserted heuristically into the list to increase recall.
         """
+        if look_for_grid_and_isni:
+            ror_from_grid = self.extract_grid_and_map_to_ror(raw_affiliation)
+            ror_from_isni = self.extract_isni_and_map_to_ror(raw_affiliation)
+            ror_from_grid_or_isni = ror_from_grid or ror_from_isni
+            if ror_from_grid_or_isni is not None:
+                return [ror_from_grid_or_isni], [1.0]
+            
         ner_prediction = ner_predictor.predict([raw_affiliation])
         main, child, address, early_candidates = parse_ner_prediction(ner_prediction[0], self)
         candidates, scores = self.get_candidates_from_main_affiliation(main, address, early_candidates)
@@ -491,6 +514,34 @@ class RORIndex:
         return parse_ror_entry_into_single_string(
             ror_entry, self.country_codes_dict, special_tokens_dict, use_separator_tokens, shuffle_names, use_wiki=False
         )
+        
+    def extract_grid_and_map_to_ror(self, s):
+        extracted_grids = grid_extractor.findall(s)
+        if len(extracted_grids) == 0:
+            return None
+        else:
+            extracted_grid_1 = extracted_grids[0]
+            extracted_ror_1 = self.grid_to_ror.get(extracted_grid_1, None)
+            if len(extracted_grid_1.split('.')[-1]) == 2:
+                extracted_grid_2 = extracted_grid_1[:-1]
+                extracted_ror_2 = self.grid_to_ror.get(extracted_grid_2, None)
+                if extracted_ror_1 and extracted_ror_2:
+                    return None
+                else:
+                    return extracted_ror_1 or extracted_ror_2
+            else:
+                return extracted_ror_1
+
+    def extract_isni_and_map_to_ror(self, s):
+        extracted_isnis = isni_extractor.findall(s)
+        # look up all extracted ISNIs and return the ror if exactly one ROR is found
+        found_rors = [self.isni_to_ror.get(isni.replace(' ', ''), None) for isni in extracted_isnis]
+        filtered_rors = [x for x in found_rors if x is not None]
+        if len(filtered_rors) == 1:
+            return filtered_rors[0]
+        else:
+            return None
+
 
 
 def parse_ror_entry_into_single_string(
