@@ -36,6 +36,9 @@ class S2AFF:
     :param number_of_top_candidates_to_return: the number of top candidates to return in the second stage of the algorithm
         a convenience to reduce the total amount of data sent
         default = 5
+    :param look_for_grid_and_isni: whether to look for GRID and ISNI ids in the raw affiliation string
+        ff found, just returns that candidate as the only one to the subsequent step
+        default = True
     """
 
     def __init__(
@@ -49,6 +52,7 @@ class S2AFF:
         no_ror_output_text="NO_ROR_FOUND",
         no_candidates_output_text="NO_CANDIDATES_FOUND",
         number_of_top_candidates_to_return=5,
+        look_for_grid_and_isni=True,
     ):
         self.ner_predictor = ner_predictor
         self.ror_index = ror_index
@@ -59,6 +63,7 @@ class S2AFF:
         self.no_ror_output_text = no_ror_output_text
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
+        self.look_for_grid_and_isni = True
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
@@ -80,12 +85,34 @@ class S2AFF:
         if isinstance(raw_affiliations, str):
             raw_affiliations = [raw_affiliations]
 
+        print("Getting NER predictions in bulk...")
         ner_predictions = self.ner_predictor.predict(raw_affiliations)
+        print("Done")
 
         outputs = []
-        for raw_affiliation, ner_prediction in zip(raw_affiliations, ner_predictions):
+        for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
+            print(
+                f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
+                end="\r",
+            )
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
-            candidates, scores = self.ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
+            # sometimes the affiliation strings just contain GRID or ISNI ids
+            # todo: some time in the future the strings may contain ROR ids too
+            if self.look_for_grid_and_isni:
+                ror_from_grid = self.ror_index.extract_grid_and_map_to_ror(raw_affiliation)
+                ror_from_isni = self.ror_index.extract_isni_and_map_to_ror(raw_affiliation)
+                ror_from_grid_or_isni = ror_from_grid or ror_from_isni
+                found_early = ror_from_grid_or_isni is not None
+                if found_early:
+                    candidates, scores = [ror_from_grid_or_isni], [1.0]
+            else:
+                found_early = False
+            # we don't want to rerank if we found a GRID or ISNI id
+            if not found_early:
+                candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
+                    main, address, early_candidates
+                )
+
             if len(candidates) == 0:
                 output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
             else:
@@ -125,7 +152,7 @@ class S2AFF:
                 "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
-                "top_candidate_display_name": display_name
+                "top_candidate_display_name": display_name,
             }
 
             outputs.append(output)

@@ -26,6 +26,7 @@ PATHS = {
     "lightgbm_gold_features": os.path.join(PROJECT_ROOT_PATH, "data", "lightgbm_gold_features.pickle"),
     "lightgbm_gold_no_ror_features": os.path.join(PROJECT_ROOT_PATH, "data", "lightgbm_gold_no_ror_features.pickle"),
     "lightgbm_model": os.path.join(PROJECT_ROOT_PATH, "data", "lightgbm_model.booster"),
+    "ror_edits": os.path.join(PROJECT_ROOT_PATH, "data", "ror_edits.jsonl"),
 }
 
 for key in PATHS.keys():

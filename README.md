@@ -43,6 +43,14 @@ The ROR json database is stored in `data`. To update it you have to do the follo
 4. Run `scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex.
 5. [If you work at AI2] Upload the new ROR json and the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
 
+## Modifying the ROR Database to Reduce Systematic Errors
+Sometimes the ROR database has issues that we'd like to patch. For example, the ROR entry of https://ror.org/02b34td92 has the alias `ai` which is very common and ends up being a source of many errors. There is an entry in the `data/ror_edits.jsonl` file that patches this. To add more patches, just add a new line to this file with the following format:
+
+```json
+{"ror_id": "https://ror.org/02b34td92", "action": "remove", "key": "aliases", "value": "ai"}
+```
+The actions can be `remove` or `add`. Key is usually `aliases` or `acronyms`. Make sure to make a commit to update the main repo with your changes.
+
 ## Performance on Gold Data
 Included in this repository in the `data` directory is a dataset of some challenging raw affiliation strings that have been manually assigned
 one or more ROR ids, and some of which have no correct RORs at all. Please see `data/gold_affiliations.csv`. The training split of this data has been used to tweak the first stage ROR indexer as well as train the second-stage LightGBM pairwise model.
