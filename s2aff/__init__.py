@@ -105,6 +105,8 @@ class S2AFF:
                 found_early = ror_from_grid_or_isni is not None
                 if found_early:
                     candidates, scores = [ror_from_grid_or_isni], [1.0]
+            else:
+                found_early = False
             # we don't want to rerank if we found a GRID or ISNI id
             if not found_early:
                 candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
