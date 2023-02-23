@@ -102,6 +102,7 @@ class RORIndex:
     def __init__(
         self,
         ror_data_path=PATHS["ror_data"],
+        ror_edits_path=PATHS["ror_edits"],
         country_info_path=PATHS["country_info"],
         works_counts_path=PATHS["openalex_works_counts"],
         use_prob_weights=USE_PROB_WEIGHTS,
@@ -115,6 +116,7 @@ class RORIndex:
 
         self.ror_data_path = cached_path(ror_data_path)
         self.country_info_path = cached_path(country_info_path)
+        self.ror_edits_path = cached_path(ror_edits_path)
         works_counts = pd.read_csv(works_counts_path)
         self.works_counts = {i.ror: i.works_count for i in works_counts.itertuples()}
         self.use_prob_weights = use_prob_weights
@@ -146,7 +148,7 @@ class RORIndex:
                     self.isni_to_ror[isni.replace(' ', '')] = r["id"]
 
         # ROR database has some issues so we'll edit it directly
-        with open(PATHS["ror_edits"], "r") as f:
+        with open(self.ror_edits_path, "r") as f:
             for line in f:
                 line_json = json.loads(line)
                 if line_json["ror_id"] in self.ror_dict:
