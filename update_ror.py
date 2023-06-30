@@ -3,7 +3,7 @@ import zipfile
 import os
 import re
 import boto3
-from s2aff.consts import ROR_VERSION
+from s2aff.consts import get_ror_version
 # Make a GET request to the Zenodo API endpoint
 response = requests.get(
     "https://zenodo.org/api/records/?communities=ror-data&sort=mostrecent")
@@ -15,7 +15,7 @@ file_name = response.json()["hits"]["hits"][0]["files"][0]["key"]
 
 latest_version = re.sub('-ror-data.zip', '', file_name)
 
-current_version = ROR_VERSION
+current_version = get_ror_version()
 print("Currently used version is " + current_version)
 print("Latest version is " + latest_version)
 if latest_version == current_version:
@@ -44,7 +44,7 @@ else:
 
     s3.upload_file(unzipped_filename, bucket_name, upload_key)
 
-    old_key = current_version+"-ror-data.json"
+    # old_key = current_version+"-ror-data.json"
 
 # delete_key = f"{folder_name}/{json_files[0]}"
 # s3.delete_object(Bucket=bucket_name, Key=delete_key)
