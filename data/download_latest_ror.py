@@ -1,7 +1,7 @@
 import requests
 import zipfile
 import os
-
+import re 
 # Make a GET request to the Zenodo API endpoint
 response = requests.get("https://zenodo.org/api/records/?communities=ror-data&sort=mostrecent")
 
@@ -27,6 +27,7 @@ json_files = [f for f in os.listdir(".") if os.path.isfile(f) and f.endswith(".j
 json_files.sort(reverse=True)
 
 print("Downloaded this file: " + json_files[0])
+print(f"Version is: {re.sub('-ror-data.json','',json_files[0])}")
 print("Make sure to do these things and open a PR:")
 print("(1) Update s2aff/conts.py with the new ROR_VERSION")
 print(
