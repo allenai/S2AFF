@@ -35,13 +35,23 @@ To get the models, run this command after the package is installed (from inside 
 `aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
 
 ## Updating the ROR Database
-The ROR json database is stored in `data`. To update it you have to do the following:
+The ROR json database is stored in `data`. To update it locally you have to do the following:
 
 1. `cd data`
 2. `python download_latest_ror.py`
 3. In `s2aff/constants.py` there is a variable called `ROR_VERSION`. Update it to the new ROR version as per the filename.
 4. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
-5. [If you work at AI2] Upload the new ROR json and the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
+
+
+
+[If you work at AI2]
+To update the ROR database used by default
+1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
+To update openalex:
+2. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
+3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
+
+
 
 ## Modifying the ROR Database to Reduce Systematic Errors
 Sometimes the ROR database has issues that we'd like to patch. For example, the ROR entry of https://ror.org/02b34td92 has the alias `ai` which is very common and ends up being a source of many errors. There is an entry in the `data/ror_edits.jsonl` file that patches this. To add more patches, just add a new line to this file with the following format:
