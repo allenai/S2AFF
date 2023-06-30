@@ -4,6 +4,7 @@ import os
 import re
 import boto3
 from util.s3 import get_ror_version
+
 # Make a GET request to the Zenodo API endpoint
 response = requests.get(
     "https://zenodo.org/api/records/?communities=ror-data&sort=mostrecent")
