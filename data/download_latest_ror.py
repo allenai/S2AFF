@@ -1,7 +1,6 @@
 import requests
 import zipfile
 import os
-import re 
 # Make a GET request to the Zenodo API endpoint
 response = requests.get("https://zenodo.org/api/records/?communities=ror-data&sort=mostrecent")
 
