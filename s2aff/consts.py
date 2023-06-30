@@ -28,11 +28,10 @@ def get_ror_version():
                  if obj['Key'].endswith(suffix)]
         if files:
             most_recent_file = max(files, key=lambda x: x['LastModified'])
-            print("Default value: "+DEFAULT_ROR_VERSION)
-            print("Latest version found: " +
+            print("Using ROR version: " +
                   most_recent_file['Key'].split('/')[-1].split(suffix)[0])
             return most_recent_file['Key'].split('/')[-1].split(suffix)[0]
-
+    print("Using ROR version: " + DEFAULT_ROR_VERSION)
     return DEFAULT_ROR_VERSION
 
 
