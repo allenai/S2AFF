@@ -12,4 +12,4 @@ def get_ror_version():
         if files:
             most_recent_file = max(files, key=lambda x: x['LastModified'])
             return most_recent_file['Key'].split('/')[-1].split(suffix)[0]
-    return DEFAULT_ROR_VERSION
+    return None
