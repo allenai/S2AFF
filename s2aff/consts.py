@@ -2,7 +2,8 @@ import logging
 import os
 import ntpath
 from pathlib import Path
-from s2aff.util.s3 import get_ror_version
+from util.s3 import get_ror_version
+
 logger = logging.getLogger("s2aff")
 
 try:
@@ -18,6 +19,8 @@ DEFAULT_ROR_VERSION = "v1.20-2023-02-28"
 
 
 ROR_VERSION = get_ror_version()
+if ROR_VERSION == None:
+    ROR_VERSION = DEFAULT_ROR_VERSION
 
 PATHS = {
     "ner_training_data": os.path.join(PROJECT_ROOT_PATH, "data", "ner_training_data.pickle"),
