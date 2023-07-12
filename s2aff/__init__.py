@@ -105,6 +105,7 @@ class S2AFF:
                 found_early = ror_from_extracted_id is not None
                 if found_early:
                     candidates, scores = [ror_from_extracted_id], [1.0]
+                    output_scores_and_thresh = (candidates, scores)
             else:
                 found_early = False
             # we don't want to rerank if we found a GRID or ISNI id
@@ -113,24 +114,24 @@ class S2AFF:
                     main, address, early_candidates
                 )
 
-            if len(candidates) == 0:
-                output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
-            elif len(candidates) == 1:
-                output_scores_and_thresh = [self.no_ror_output_text], [0.0] if scores[0] < self.pairwise_model_threshold else (candidates, scores)
-
-            else:
-                reranked_candidates, reranked_scores = self.pairwise_model.predict(
-                    raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
-                )
-                # apply threshold to reranked scores
-                if len(reranked_candidates) == 0:
+                if len(candidates) == 0:
                     output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
-                elif reranked_scores[0] < self.pairwise_model_threshold and \
-                        (len(reranked_candidates) == 1 or \
-                            reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold):
-                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                elif len(candidates) == 1:
+                    output_scores_and_thresh = [self.no_ror_output_text], [0.0] if scores[0] < self.pairwise_model_threshold else (candidates, scores)
+
                 else:
-                    output_scores_and_thresh = (reranked_candidates, reranked_scores)
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict(
+                        raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
+                    )
+                    # apply threshold to reranked scores
+                    if len(reranked_candidates) == 0:
+                        output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
+                    elif reranked_scores[0] < self.pairwise_model_threshold and \
+                            (len(reranked_candidates) == 1 or \
+                                reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold):
+                            output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                    else:
+                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
 
             try:
                 display_name = self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
