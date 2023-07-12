@@ -36,7 +36,7 @@ class S2AFF:
     :param number_of_top_candidates_to_return: the number of top candidates to return in the second stage of the algorithm
         a convenience to reduce the total amount of data sent
         default = 5
-    :param look_for_grid_and_isni: whether to look for GRID and ISNI ids in the raw affiliation string
+    :param look_for_extractable_ids: whether to look for GRID and ISNI ids in the raw affiliation string
         ff found, just returns that candidate as the only one to the subsequent step
         default = True
     """
@@ -52,7 +52,7 @@ class S2AFF:
         no_ror_output_text="NO_ROR_FOUND",
         no_candidates_output_text="NO_CANDIDATES_FOUND",
         number_of_top_candidates_to_return=5,
-        look_for_grid_and_isni=True,
+        look_for_extractable_ids=True,
     ):
         self.ner_predictor = ner_predictor
         self.ror_index = ror_index
@@ -63,7 +63,7 @@ class S2AFF:
         self.no_ror_output_text = no_ror_output_text
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
-        self.look_for_grid_and_isni = True
+        self.look_for_extractable_ids = True
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
@@ -96,15 +96,15 @@ class S2AFF:
                 end="\r",
             )
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
-            # sometimes the affiliation strings just contain GRID or ISNI ids
-            # todo: some time in the future the strings may contain ROR ids too
-            if self.look_for_grid_and_isni:
+            # sometimes the affiliation strings just contain GRID, ISNI, or ROR ids directly
+            if self.look_for_extractable_ids:
+                ror_extracted = self.ror_index.extract_ror(raw_affiliation)
                 ror_from_grid = self.ror_index.extract_grid_and_map_to_ror(raw_affiliation)
                 ror_from_isni = self.ror_index.extract_isni_and_map_to_ror(raw_affiliation)
-                ror_from_grid_or_isni = ror_from_grid or ror_from_isni
-                found_early = ror_from_grid_or_isni is not None
+                ror_from_extracted_id = ror_extracted or ror_from_grid or ror_from_isni
+                found_early = ror_from_extracted_id is not None
                 if found_early:
-                    candidates, scores = [ror_from_grid_or_isni], [1.0]
+                    candidates, scores = [ror_from_extracted_id], [1.0]
             else:
                 found_early = False
             # we don't want to rerank if we found a GRID or ISNI id
@@ -115,6 +115,12 @@ class S2AFF:
 
             if len(candidates) == 0:
                 output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
+            elif len(candidates) == 1:
+                if scores[0] < self.pairwise_model_threshold:
+                    output_scores_and_thresh = ([self.no_ror_output_text], [0.0])
+                else:
+                    output_scores_and_thresh = (candidates, scores)
+
             else:
                 reranked_candidates, reranked_scores = self.pairwise_model.predict(
                     raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
@@ -122,20 +128,13 @@ class S2AFF:
                 # apply threshold to reranked scores
                 if len(reranked_candidates) == 0:
                     output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
-                elif len(reranked_candidates) == 1:
-                    if reranked_scores[0] < self.pairwise_model_threshold:
+                elif reranked_scores[0] < self.pairwise_model_threshold and \
+                        (len(reranked_candidates) == 1 or \
+                            reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold):
                         output_scores_and_thresh = [self.no_ror_output_text], [0.0]
-                    else:
-                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
                 else:
-                    delta = reranked_scores[0] - reranked_scores[1]
-                    if (
-                        reranked_scores[0] < self.pairwise_model_threshold
-                        and delta < self.pairwise_model_delta_threshold
-                    ):
-                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
-                    else:
-                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
+                    output_scores_and_thresh = (reranked_candidates, reranked_scores)
+
             try:
                 display_name = self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
             except:

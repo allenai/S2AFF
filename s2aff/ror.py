@@ -25,7 +25,7 @@ from s2aff.consts import (
 )
 from s2aff.file_cache import cached_path
 
-
+ror_extractor = re.compile(r"(https\:\/\/ror\.org\/0[a-z|0-9]{6}[0-9]{2})")
 grid_extractor = re.compile(r"(grid\.\d{4,6}\.[0-9a-f]{1,2})")
 isni_extractor = re.compile(r"(?=(\d{4}\s{0,1}\d{4}\s{0,1}\d{4}\s{0,1}[xX\d]{4}))")
 
@@ -335,14 +335,14 @@ class RORIndex:
         self.ror_name_direct_lookup = ror_name_direct_lookup
         self.inverse_dict_fixed = inverse_dict_fixed
 
-    def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor, look_for_grid_and_isni=True):
+    def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor, look_for_extractable_ids=True):
         """A wrapper function that puts the raw affiliation string through the
         NER predictor, parses the predicted output, and fetches the ROR candidates.
 
         Args:
             raw_affiliation (str): the raw affiliation string
             ner_predictor (NERPredictor): a model that can predict named affiliation entities
-            look_for_grid_and_isni (bool): whether to look for GRID and ISNI IDs in the raw affiliation string
+            look_for_extractable_ids (bool): whether to look for GRID and ISNI IDs in the raw affiliation string
                 Defalts to True. If found, just returns that candidate as the only one.
 
         Returns:
@@ -352,12 +352,13 @@ class RORIndex:
             Note that the candidates are sometimes *not* fully sorted by score because arbitrarily
             scored candidates are inserted heuristically into the list to increase recall.
         """
-        if look_for_grid_and_isni:
+        if look_for_extractable_ids:
+            extracted_ror = self.extract_ror(raw_affiliation)
             ror_from_grid = self.extract_grid_and_map_to_ror(raw_affiliation)
             ror_from_isni = self.extract_isni_and_map_to_ror(raw_affiliation)
-            ror_from_grid_or_isni = ror_from_grid or ror_from_isni
-            if ror_from_grid_or_isni is not None:
-                return [ror_from_grid_or_isni], [1.0]
+            ror_from_extracted_id = extracted_ror or ror_from_grid or ror_from_isni
+            if ror_from_extracted_id is not None:
+                return [ror_from_extracted_id], [1.0]
             
         ner_prediction = ner_predictor.predict([raw_affiliation])
         main, child, address, early_candidates = parse_ner_prediction(ner_prediction[0], self)
@@ -517,6 +518,10 @@ class RORIndex:
             ror_entry, self.country_codes_dict, special_tokens_dict, use_separator_tokens, shuffle_names, use_wiki=False
         )
         
+    def extract_ror(self, s):
+        extracted_rors = ror_extractor.findall(s)
+        return extracted_rors[0] if len(extracted_rors) > 0 else None
+
     def extract_grid_and_map_to_ror(self, s):
         extracted_grids = grid_extractor.findall(s)
         if len(extracted_grids) == 0:
