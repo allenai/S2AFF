@@ -119,7 +119,7 @@ class S2AFF:
                 if scores[0] < self.pairwise_model_threshold:
                     output_scores_and_thresh = ([self.no_ror_output_text], [0.0])
                 else:
-                   output_scores_and_thresh = (candidates, scores)
+                    output_scores_and_thresh = (candidates, scores)
 
             else:
                 reranked_candidates, reranked_scores = self.pairwise_model.predict(
