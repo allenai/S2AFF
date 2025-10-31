@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.claude/
+data/ner_model/
+data/v*.json
 
 # C extensions
 *.so

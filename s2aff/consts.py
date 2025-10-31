@@ -7,15 +7,14 @@ from util.s3 import get_ror_version
 logger = logging.getLogger("s2aff")
 
 try:
-    PROJECT_ROOT_PATH = os.path.abspath(
-        os.path.join(__file__, os.pardir, os.pardir))
+    PROJECT_ROOT_PATH = os.path.abspath(os.path.join(__file__, os.pardir, os.pardir))
 except NameError:
     PROJECT_ROOT_PATH = os.path.abspath(os.path.join(os.getcwd()))
 
 
 CACHE_ROOT = Path(os.getenv("S2AFF_CACHE", str(Path.home() / ".s2aff")))
 
-DEFAULT_ROR_VERSION = "v1.20-2023-02-28"
+DEFAULT_ROR_VERSION = "v1.70-2025-08-26"
 
 
 ROR_VERSION = get_ror_version()

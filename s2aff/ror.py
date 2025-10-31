@@ -6,13 +6,8 @@ from random import shuffle
 
 import numpy as np
 import pandas as pd
-from random import shuffle
 from sklearn.feature_extraction.text import TfidfVectorizer
-from collections import defaultdict, Counter
-from s2aff.file_cache import cached_path
-from operator import itemgetter
-from s2aff.text import STOPWORDS, fix_text, INVERTED_ABBREVIATION_DICTIONARY
-from s2aff.model import parse_ner_prediction
+
 from s2aff.consts import (
     INSERT_EARLY_CANDIDATES_IND,
     MAX_INTERSECTION_DENOMINATOR,
@@ -24,8 +19,10 @@ from s2aff.consts import (
     SCORE_BASED_EARLY_CUTOFF,
 )
 from s2aff.file_cache import cached_path
+from s2aff.model import parse_ner_prediction
+from s2aff.text import STOPWORDS, fix_text, INVERTED_ABBREVIATION_DICTIONARY
 
-ror_extractor = re.compile(r"(https\:\/\/ror\.org\/0[a-z|0-9]{6}[0-9]{2})")
+ror_extractor = re.compile(r"(?:https?://)?ror\.org/(0[a-z0-9]{8})", re.I)
 grid_extractor = re.compile(r"(grid\.\d{4,6}\.[0-9a-f]{1,2})")
 isni_extractor = re.compile(r"(?=(\d{4}\s{0,1}\d{4}\s{0,1}\d{4}\s{0,1}[xX\d]{4}))")
 
@@ -73,6 +70,71 @@ def sum_list_of_list_of_tuples(dicts, use_log=False):
             else:
                 ret[k] += v
     return dict(ret)
+
+
+def v2_display_name(rec):
+    """Extract display name from ROR v2 names array."""
+    for n in rec.get("names", []):
+        if "ror_display" in n.get("types", []):
+            return n["value"]
+    return rec["names"][0]["value"] if rec.get("names") else None
+
+
+def coerce_v2_to_v1like(rec):
+    """Convert ROR v2 record to a v1-shaped dict that existing code understands."""
+    if "names" not in rec:  # already v1
+        return rec
+
+    rec = dict(rec)  # shallow copy
+
+    # ---- Names
+    rec["name"]     = v2_display_name(rec)
+    rec["aliases"]  = [n["value"] for n in rec["names"] if "alias"    in n.get("types", [])]
+    rec["acronyms"] = [n["value"] for n in rec["names"] if "acronym"  in n.get("types", [])]
+    rec["labels"]   = [{"label": n["value"]} for n in rec["names"] if "label" in n.get("types", [])]
+
+    # ---- Locations → addresses (city/state/state_code, + country_code for fallback)
+    # v2 has locations[0].geonames_details.{name (locality), country_name, country_code, country_subdivision_*}
+    addr = {}
+    if rec.get("locations"):
+        g = rec["locations"][0].get("geonames_details", {}) or {}
+        addr = {
+            "city": g.get("name"),  # locality (city/town)
+            "state": g.get("country_subdivision_name"),
+            "state_code": g.get("country_subdivision_code"),
+            # keep a v1-like field, but we can't guarantee a country geonames id from v2
+            "country_geonames_id": None,
+            # add for later fallback in __init__
+            "country_code": g.get("country_code"),
+            "country_name": g.get("country_name"),
+        }
+    rec["addresses"] = [addr] if addr else []
+
+    # ---- External IDs array → v1-style dict (upper keys; robust preferred fallback)
+    ed = {}
+    for e in rec.get("external_ids", []):
+        key = e.get("type", "").upper()
+        all_ids = e.get("all", []) or []
+        ed[key] = {
+            "all": all_ids,
+            "preferred": e.get("preferred", (all_ids[0] if all_ids else None)),
+        }
+    rec["external_ids"] = ed
+
+    # ---- Links → wikipedia fields
+    wiki_links = [l["value"] for l in rec.get("links", []) if l.get("type") == "wikipedia"]
+    # keep current code working:
+    rec["wikipedia_page"] = wiki_links                          # list for parse_ror_entry_into_single_string
+    # also provide the canonical v1-ish field if ever switching:
+    rec["wikipedia_url"] = wiki_links[0] if wiki_links else None
+
+    # ---- Relationships: title-case (so 'Child' check keeps working)
+    for rel in rec.get("relationships", []):
+        t = rel.get("type")
+        if t:
+            rel["type"] = t.capitalize()
+
+    return rec
 
 
 class RORIndex:
@@ -129,23 +191,30 @@ class RORIndex:
 
         self.country_codes = pd.read_csv(self.country_info_path, sep="\t")
         self.country_codes_dict = {}
+        self.country_by_iso2 = {}  # NEW: for v2 fallback
         for _, r in self.country_codes.iterrows():
             self.country_codes_dict[r["geonameid"]] = [r["Country"], r["ISO"], r["ISO3"], r["fips"]]
+            self.country_by_iso2[r["ISO"]] = [r["Country"], r["ISO"], r["ISO3"], r["fips"]]
 
         with open(self.ror_data_path, "r") as f:
-            ror = json.load(f)
-            self.ror_dict = {i["id"]: i for i in ror if "name" in i}
+            raw = json.load(f)
+            ror = [coerce_v2_to_v1like(r) for r in raw]  # normalize v2 → v1-like
+            self.ror_dict = {i["id"]: i for i in ror if i.get("name")}
             for key in self.ror_dict.keys():
                 self.ror_dict[key]["works_count"] = self.works_counts.get(key, 0)
 
         self.grid_to_ror = {}
         self.isni_to_ror = {}
         for r in ror:
-            if "GRID" in r["external_ids"]:
-                self.grid_to_ror[r["external_ids"]["GRID"]["preferred"]] = r["id"]
-            if 'ISNI' in r["external_ids"]:
-                for isni in r["external_ids"]["ISNI"]["all"]:
-                    self.isni_to_ror[isni.replace(' ', '')] = r["id"]
+            external_ids = r.get("external_ids") or {}
+            grid = external_ids.get("GRID", {})
+            pref = grid.get("preferred")
+            if pref:
+                self.grid_to_ror[pref] = r["id"]
+            isni = external_ids.get("ISNI")
+            if isni:
+                for value in isni.get("all", []):
+                    self.isni_to_ror[value.replace(' ', '')] = r["id"]
 
         # ROR database has some issues so we'll edit it directly
         with open(self.ror_edits_path, "r") as f:
@@ -164,7 +233,6 @@ class RORIndex:
         # fixing them here by swapping works_count between parent ROR and child ROR
         # when the child ROR has suspiciously way more works_count AND the parent and child names are
         # name (location_1) and name (location_2)
-        swaps_record = []
         for i in range(2):  # have to do this twice because there are multi-level hierarchies
             for ror_id in self.ror_dict.keys():
                 parent_works_count = self.ror_dict[ror_id]["works_count"]
@@ -185,7 +253,6 @@ class RORIndex:
                             if child_works_count > parent_works_count:
                                 self.ror_dict[ror_id]["works_count"] = child_works_count
                                 self.ror_dict[child_id]["works_count"] = parent_works_count
-                                swaps_record.append((parent_name, child_name))
                                 break  # we sorted so this swap is only necessary once
 
         # we need some indices for fetching first order candidates
@@ -205,7 +272,7 @@ class RORIndex:
         texts = []
 
         for r in ror:
-            if "name" not in r:
+            if not r.get("name"):
                 continue
 
             ror_id = r["id"]
@@ -241,11 +308,12 @@ class RORIndex:
 
             # address
             if "addresses" in r and len(r["addresses"]) > 0:
-                city = fix_text(r["addresses"][0]["city"]).lower().replace(",", "").split() or []
-                state = fix_text(r["addresses"][0]["state"]).lower().replace(",", "").split() or []
-                if r["addresses"][0]["state_code"] is not None:
+                addr0 = r["addresses"][0]
+                city = fix_text(addr0["city"]).lower().replace(",", "").split() or [] if addr0.get("city") else []
+                state = fix_text(addr0["state"]).lower().replace(",", "").split() or [] if addr0.get("state") else []
+                if addr0.get("state_code") is not None:
                     state_code = [
-                        fix_text(i).lower().replace(",", "") for i in r["addresses"][0]["state_code"].split("-")
+                        fix_text(i).lower().replace(",", "") for i in addr0["state_code"].split("-")
                     ]
                 else:
                     state_code = []
@@ -253,8 +321,19 @@ class RORIndex:
                 # sometimes the state code is just a number - remove it if so
                 state_code = [i for i in state_code if i.isalpha()]
 
-                # additional country names and codes
-                country_and_codes = self.country_codes_dict[r["addresses"][0]["country_geonames_id"]]
+                # additional country names and codes (with ISO2 fallback for v2 records)
+                country_and_codes = None
+                geoid = addr0.get("country_geonames_id")
+                if geoid and geoid in self.country_codes_dict:
+                    country_and_codes = self.country_codes_dict[geoid]
+                else:
+                    iso2 = (addr0.get("country_code") or "").upper()
+                    if iso2:
+                        country_and_codes = self.country_by_iso2.get(iso2)
+
+                if country_and_codes is None:
+                    country_and_codes = ["", "", "", ""]
+
                 if country_and_codes[0] == "China":
                     extras = ["pr", "prc"]
                 else:
@@ -274,7 +353,7 @@ class RORIndex:
                 for i in city:
                     ror_city_inverted_index[i].add(ror_id)
 
-        if self.use_prob_weights:
+        if self.use_prob_weights and texts:
             vectorizer = TfidfVectorizer(
                 min_df=1, analyzer="word", tokenizer=None, preprocessor=None, lowercase=False
             ).fit(texts)
@@ -454,6 +533,7 @@ class RORIndex:
                 seen_rors.add(ror_id)
 
         # insert early candidates in position self.insert_early_candidates_ind if not seen already
+        early_candidates_tuples = []
         if self.insert_early_candidates_ind is not None:
             early_candidates_tuples = [(i, -0.1) for i in early_candidates if i not in seen_rors]
             ranked_unique = (
@@ -491,10 +571,9 @@ class RORIndex:
                     ranked_removed_to_reinsert = [
                         (i[0], -0.15) for i in ranked_removed if i[1] >= ranked_removed_top_score
                     ]
-                    if self.insert_early_candidates_ind is not None:
-                        insert_ind = len(early_candidates_tuples) + self.insert_early_candidates_ind + 10
-                    else:
-                        insert_ind = len(early_candidates_tuples) + 10
+                    ec_len = len(early_candidates_tuples) if self.insert_early_candidates_ind is not None else 0
+                    base = self.insert_early_candidates_ind or 0
+                    insert_ind = ec_len + base + 10
                     ranked_after_address_filter = (
                         ranked_after_address_filter[:insert_ind]
                         + ranked_removed_to_reinsert
@@ -515,7 +594,7 @@ class RORIndex:
             return "[NAME] " + ror_id
         ror_entry = self.ror_dict[ror_id]
         return parse_ror_entry_into_single_string(
-            ror_entry, self.country_codes_dict, special_tokens_dict, use_separator_tokens, shuffle_names, use_wiki=False
+            ror_entry, self.country_codes_dict, self.country_by_iso2, special_tokens_dict, use_separator_tokens, shuffle_names, use_wiki=False
         )
         
     def extract_ror(self, s):
@@ -554,6 +633,7 @@ class RORIndex:
 def parse_ror_entry_into_single_string(
     ror_entry,
     country_codes_dict,
+    country_by_iso2,
     special_tokens_dict,
     use_separator_tokens=True,
     shuffle_names=False,
@@ -586,14 +666,28 @@ def parse_ror_entry_into_single_string(
         output = " ; ".join(all_names)
 
     if "addresses" in ror_entry and len(ror_entry["addresses"]) > 0:
-        city = ror_entry["addresses"][0]["city"] or ""
-        state = ror_entry["addresses"][0]["state"] or ""
-        if ror_entry["addresses"][0]["state_code"] is not None:
-            state_code = ror_entry["addresses"][0]["state_code"].split("-")
+        addr0 = ror_entry["addresses"][0]
+        city = addr0.get("city") or ""
+        state = addr0.get("state") or ""
+        if addr0.get("state_code") is not None:
+            state_code = addr0["state_code"].split("-")
         else:
             state_code = []
         state_code = [i for i in state_code if i.isalpha()]
-        country_and_codes = country_codes_dict[ror_entry["addresses"][0]["country_geonames_id"]]
+
+        # Country lookup with ISO2 fallback for v2 records
+        country_and_codes = None
+        geoid = addr0.get("country_geonames_id")
+        if geoid and geoid in country_codes_dict:
+            country_and_codes = country_codes_dict[geoid]
+        else:
+            iso2 = (addr0.get("country_code") or "").upper()
+            if iso2:
+                country_and_codes = country_by_iso2.get(iso2)
+
+        if country_and_codes is None:
+            country_and_codes = ["", "", "", ""]
+
         if country_and_codes[0] == "China":
             extras = ["PR", "PRC"]
         else:

@@ -1,43 +1,62 @@
-"""
-Our ROR file needs to have the works count from OpenAlex added to it.
-
-This does that
-"""
-
 from s2aff.consts import PATHS
-import json
-import boto3
-import gzip
-from io import BytesIO
+from s2aff.file_cache import cached_path
+import json, gzip
 import pandas as pd
+import boto3
+from botocore import UNSIGNED
+from botocore.config import Config
 
-
-"""
-Go through every single file from s3://openalex/data/institutions/updated_date=*/part-***.gz
-
-Stream the jsonl files inside there
-"""
 bucket = "openalex"
-prefix = "data/institutions"
+prefix = "data/institutions/updated_date="  # partitions
 
-s3 = boto3.client("s3")
+# anonymous/unsigned client (works for OpenAlex bucket)
+s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+
 paginator = s3.get_paginator("list_objects_v2")
 pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
 
-works_count_dict = {}
-for page in pages:
-    for obj in page["Contents"]:
-        if obj["Key"].startswith("part") and obj["Key"].endswith(".gz"):
-            print("Working on", obj["Key"])
-            obj = s3.get_object(Bucket=bucket, Key=obj["Key"])
-            with gzip.GzipFile(fileobj=BytesIO(obj["Body"].read())) as f:
-                for line in f:
-                    line = json.loads(line)
-                    ror_id = line["ror"]
-                    works_count = line["works_count"]
-                    works_count_dict[ror_id] = works_count
+works_count = {}
+gz_files = recs = 0
 
-# convert works_count_dict to a dataframe
-df = pd.DataFrame.from_dict(works_count_dict, orient="index", columns=["works_count"]).reset_index()
+for page in pages:
+    for obj in page.get("Contents", []):
+        key = obj["Key"]
+        # only real data parts; skip manifests/folders
+        if not key.endswith(".gz"):
+            continue
+
+        gz_files += 1
+        if gz_files <= 3:
+            print("example key:", key)
+
+        resp = s3.get_object(Bucket=bucket, Key=key)
+        with gzip.GzipFile(fileobj=resp["Body"]) as f:
+            for bline in f:
+                row = json.loads(bline)
+                ror = row.get("ror") or (row.get("ids") or {}).get("ror")
+                if not ror:
+                    continue
+                wc = row.get("works_count")
+                if wc is None:  # fallback, just in case
+                    wc = sum(y.get("works_count", 0) for y in row.get("counts_by_year", []))
+                works_count[ror] = wc
+                recs += 1
+
+print(f"gz files: {gz_files}, institutions parsed: {recs}, unique RORs: {len(works_count)}")
+
+df = pd.DataFrame.from_dict(works_count, orient="index", columns=["works_count"]).reset_index()
 df.columns = ["ror", "works_count"]
-df.to_csv(PATHS["openalex_works_counts"], index=False)
+df.to_csv(cached_path(PATHS["openalex_works_counts"]), index=False)
+
+# now upload to S3 if you have permissions as an Ai2 employee
+# supposed to end up here https://s3-us-west-2.amazonaws.com/ai2-s2-research-public/s2aff-release/openalex_works_counts.csv
+s3_client = boto3.client("s3")
+s3_client.upload_file(
+    cached_path(PATHS["openalex_works_counts"]),
+    "ai2-s2-research-public",
+    "s2aff-release/openalex_works_counts.csv",
+    ExtraArgs={
+        "ContentType": "text/csv",
+        "ACL": "public-read",
+    },
+)

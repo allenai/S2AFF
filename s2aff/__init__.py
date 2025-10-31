@@ -63,7 +63,7 @@ class S2AFF:
         self.no_ror_output_text = no_ror_output_text
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
-        self.look_for_extractable_ids = True
+        self.look_for_extractable_ids = look_for_extractable_ids
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
@@ -128,10 +128,11 @@ class S2AFF:
                 # apply threshold to reranked scores
                 if len(reranked_candidates) == 0:
                     output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
-                elif reranked_scores[0] < self.pairwise_model_threshold and \
-                        (len(reranked_candidates) == 1 or \
-                            reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold):
-                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                elif reranked_scores[0] < self.pairwise_model_threshold and (
+                    len(reranked_candidates) == 1
+                    or reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold
+                ):
+                    output_scores_and_thresh = [self.no_ror_output_text], [0.0]
                 else:
                     output_scores_and_thresh = (reranked_candidates, reranked_scores)
 
