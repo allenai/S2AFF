@@ -14,3 +14,4 @@ lightgbm
 torch
 pydantic
 pytest
+pyarrow<21
