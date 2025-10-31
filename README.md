@@ -9,7 +9,22 @@ This is a 3-stage model:
 The model has some heuristic rules for predicting "no ROR found". These are: (1) if the score of the top candidate is below 0.3 and (2) if the difference in the top score and the second top score is less than 0.2. These were found by empirical exploration. See `scripts/analyze_thresholds.ipynb` for more details.
 
 ## Installation
-To install this package, run the following:
+To install this package, run the following (uv):
+```
+git clone git@github.com:allenai/S2AFF.git
+cd S2AFF
+uv python install 3.9.11
+uv venv --python 3.9.11
+
+# macOS/Linux:
+source .venv/bin/activate
+# Windows (PowerShell):
+# .\.venv\Scripts\Activate.ps1
+
+uv pip install -e .
+```
+
+or (conda)
 
 ```bash
 git clone git@github.com:allenai/S2AFF.git
