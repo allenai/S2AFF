@@ -72,12 +72,41 @@ def sum_list_of_list_of_tuples(dicts, use_log=False):
     return dict(ret)
 
 
+def normalize_geoname_id(value):
+    """Normalize Geonames identifiers to consistent string keys."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if isinstance(value, (np.integer, int)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        if np.isnan(value):
+            return None
+        if float(value).is_integer():
+            return str(int(value))
+        return str(value)
+    return str(value)
+
+
 def v2_display_name(rec):
     """Extract display name from ROR v2 names array."""
-    for n in rec.get("names", []):
-        if "ror_display" in n.get("types", []):
-            return n["value"]
-    return rec["names"][0]["value"] if rec.get("names") else None
+    names = rec.get("names") or []
+    for n in names:
+        if not isinstance(n, dict):
+            continue
+        if "ror_display" in (n.get("types") or []):
+            value = n.get("value")
+            if value:
+                return value
+    for n in names:
+        if not isinstance(n, dict):
+            continue
+        value = n.get("value")
+        if value:
+            return value
+    return None
 
 
 def coerce_v2_to_v1like(rec):
@@ -88,16 +117,18 @@ def coerce_v2_to_v1like(rec):
     rec = dict(rec)  # shallow copy
 
     # ---- Names
-    rec["name"]     = v2_display_name(rec)
-    rec["aliases"]  = [n["value"] for n in rec["names"] if "alias"    in n.get("types", [])]
-    rec["acronyms"] = [n["value"] for n in rec["names"] if "acronym"  in n.get("types", [])]
-    rec["labels"]   = [{"label": n["value"]} for n in rec["names"] if "label" in n.get("types", [])]
+    names = rec.get("names") or []
+    rec["name"] = v2_display_name(rec)
+    rec["aliases"] = [n.get("value") for n in names if isinstance(n, dict) and n.get("value") and "alias" in (n.get("types") or [])]
+    rec["acronyms"] = [n.get("value") for n in names if isinstance(n, dict) and n.get("value") and "acronym" in (n.get("types") or [])]
+    rec["labels"] = [{"label": n.get("value")} for n in names if isinstance(n, dict) and n.get("value") and "label" in (n.get("types") or [])]
 
     # ---- Locations → addresses (city/state/state_code, + country_code for fallback)
     # v2 has locations[0].geonames_details.{name (locality), country_name, country_code, country_subdivision_*}
     addr = {}
     if rec.get("locations"):
-        g = rec["locations"][0].get("geonames_details", {}) or {}
+        loc0 = rec["locations"][0] or {}
+        g = (loc0.get("geonames_details") or {}) if isinstance(loc0, dict) else {}
         addr = {
             "city": g.get("name"),  # locality (city/town)
             "state": g.get("country_subdivision_name"),
@@ -113,7 +144,11 @@ def coerce_v2_to_v1like(rec):
     # ---- External IDs array → v1-style dict (upper keys; robust preferred fallback)
     ed = {}
     for e in rec.get("external_ids", []):
-        key = e.get("type", "").upper()
+        if not isinstance(e, dict):
+            continue
+        key = (e.get("type") or "").upper()
+        if not key:
+            continue
         all_ids = e.get("all", []) or []
         ed[key] = {
             "all": all_ids,
@@ -122,17 +157,23 @@ def coerce_v2_to_v1like(rec):
     rec["external_ids"] = ed
 
     # ---- Links → wikipedia fields
-    wiki_links = [l["value"] for l in rec.get("links", []) if l.get("type") == "wikipedia"]
+    wiki_links = [l.get("value") for l in rec.get("links", []) if isinstance(l, dict) and l.get("type") == "wikipedia" and l.get("value")]
     # keep current code working:
     rec["wikipedia_page"] = wiki_links                          # list for parse_ror_entry_into_single_string
     # also provide the canonical v1-ish field if ever switching:
     rec["wikipedia_url"] = wiki_links[0] if wiki_links else None
 
     # ---- Relationships: title-case (so 'Child' check keeps working)
-    for rel in rec.get("relationships", []):
-        t = rel.get("type")
-        if t:
-            rel["type"] = t.capitalize()
+    relationships = []
+    for rel in rec.get("relationships", []) or []:
+        if not isinstance(rel, dict):
+            continue
+        rel_copy = dict(rel)
+        t = rel_copy.get("type")
+        if isinstance(t, str) and t:
+            rel_copy["type"] = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
+        relationships.append(rel_copy)
+    rec["relationships"] = relationships
 
     return rec
 
@@ -193,8 +234,12 @@ class RORIndex:
         self.country_codes_dict = {}
         self.country_by_iso2 = {}  # NEW: for v2 fallback
         for _, r in self.country_codes.iterrows():
-            self.country_codes_dict[r["geonameid"]] = [r["Country"], r["ISO"], r["ISO3"], r["fips"]]
-            self.country_by_iso2[r["ISO"]] = [r["Country"], r["ISO"], r["ISO3"], r["fips"]]
+            geoid = normalize_geoname_id(r["geonameid"])
+            if geoid:
+                self.country_codes_dict[geoid] = [r["Country"], r["ISO"], r["ISO3"], r["fips"]]
+            iso2 = (r["ISO"] or "").upper() if pd.notna(r["ISO"]) else ""
+            if iso2:
+                self.country_by_iso2[iso2] = [r["Country"], iso2, r["ISO3"], r["fips"]]
 
         with open(self.ror_data_path, "r") as f:
             raw = json.load(f)
@@ -324,6 +369,7 @@ class RORIndex:
                 # additional country names and codes (with ISO2 fallback for v2 records)
                 country_and_codes = None
                 geoid = addr0.get("country_geonames_id")
+                geoid = normalize_geoname_id(geoid)
                 if geoid and geoid in self.country_codes_dict:
                     country_and_codes = self.country_codes_dict[geoid]
                 else:
@@ -598,8 +644,13 @@ class RORIndex:
         )
         
     def extract_ror(self, s):
-        extracted_rors = ror_extractor.findall(s)
-        return extracted_rors[0] if len(extracted_rors) > 0 else None
+        match = ror_extractor.search(s)
+        if not match:
+            return None
+        ror_suffix = match.group(1)
+        if not ror_suffix:
+            return None
+        return f"https://ror.org/{ror_suffix.lower()}"
 
     def extract_grid_and_map_to_ror(self, s):
         extracted_grids = grid_extractor.findall(s)
@@ -677,7 +728,7 @@ def parse_ror_entry_into_single_string(
 
         # Country lookup with ISO2 fallback for v2 records
         country_and_codes = None
-        geoid = addr0.get("country_geonames_id")
+        geoid = normalize_geoname_id(addr0.get("country_geonames_id"))
         if geoid and geoid in country_codes_dict:
             country_and_codes = country_codes_dict[geoid]
         else:

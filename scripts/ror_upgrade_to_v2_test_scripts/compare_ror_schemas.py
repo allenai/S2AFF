@@ -4,6 +4,8 @@ Loads both schema versions and compares the resulting RORIndex structures.
 """
 
 import os
+from collections import Counter
+
 from s2aff.ror import RORIndex
 from s2aff.consts import PROJECT_ROOT_PATH
 
@@ -50,10 +52,34 @@ def summarize_index(idx, label):
     missing_geo_id = sum(
         1 for r in idx.ror_dict.values() if r.get("addresses") and not r["addresses"][0].get("country_geonames_id")
     )
+    missing_country_code = sum(
+        1 for r in idx.ror_dict.values()
+        if r.get("addresses") and not (r["addresses"][0].get("country_code") or r["addresses"][0].get("country_geonames_id"))
+    )
+    missing_name = sum(1 for r in idx.ror_dict.values() if not r.get("name"))
+    empty_wiki_url = sum(1 for r in idx.ror_dict.values() if r.get("wikipedia_page") and not r.get("wikipedia_url"))
 
     print(f"\nData quality:")
     print(f"  Records with addresses but no city: {missing_city}")
     print(f"  Records with addresses but no country_geonames_id: {missing_geo_id}")
+    print(f"  Records with addresses but no country code fallback: {missing_country_code}")
+    print(f"  Records missing name: {missing_name}")
+    print(f"  Records with wikipedia_page but empty wikipedia_url: {empty_wiki_url}")
+
+    relationship_types = Counter()
+    relationships_missing_type = 0
+    for r in idx.ror_dict.values():
+        for rel in r.get("relationships", []):
+            t = rel.get("type")
+            if not t:
+                relationships_missing_type += 1
+            else:
+                relationship_types[t] += 1
+
+    print(f"\nRelationships:")
+    print(f"  Unique relationship types: {len(relationship_types)}")
+    print(f"  Top relationship types: {relationship_types.most_common(5)}")
+    print(f"  Relationships missing type: {relationships_missing_type}")
 
     # Index structures
     print(f"\nIndex structures:")
@@ -130,6 +156,30 @@ def compare_indices(idx_v1, idx_v2):
         f"  address_index['city_index']: v1={len(idx_v1.address_index['city_index'])}, v2={len(idx_v2.address_index['city_index'])}"
     )
     print(f"  ror_name_direct_lookup: v1={len(idx_v1.ror_name_direct_lookup)}, v2={len(idx_v2.ror_name_direct_lookup)}")
+
+    # GRID / ISNI mapping differences
+    grid_keys_v1 = set(idx_v1.grid_to_ror.keys())
+    grid_keys_v2 = set(idx_v2.grid_to_ror.keys())
+    isni_keys_v1 = set(idx_v1.isni_to_ror.keys())
+    isni_keys_v2 = set(idx_v2.isni_to_ror.keys())
+    print(f"\nIdentifier mapping comparison:")
+    print(f"  GRID ids: v1={len(grid_keys_v1)}, v2={len(grid_keys_v2)}, intersection={len(grid_keys_v1 & grid_keys_v2)}")
+    print(f"  ISNI ids: v1={len(isni_keys_v1)}, v2={len(isni_keys_v2)}, intersection={len(isni_keys_v1 & isni_keys_v2)}")
+    if grid_keys_v1 ^ grid_keys_v2:
+        sample_diff = list(grid_keys_v1 ^ grid_keys_v2)[:5]
+        print(f"  Sample differing GRID ids: {sample_diff}")
+    if isni_keys_v1 ^ isni_keys_v2:
+        sample_diff = list(isni_keys_v1 ^ isni_keys_v2)[:5]
+        print(f"  Sample differing ISNI ids: {sample_diff}")
+
+    # Check that coercion preserved key relationship fields
+    relationship_mismatch = 0
+    for ror_id in common_ids:
+        rel_v1 = idx_v1.ror_dict[ror_id].get("relationships", [])
+        rel_v2 = idx_v2.ror_dict[ror_id].get("relationships", [])
+        if len(rel_v1) != len(rel_v2):
+            relationship_mismatch += 1
+    print(f"\nRecords with differing relationship counts: {relationship_mismatch}")
 
 
 if __name__ == "__main__":
