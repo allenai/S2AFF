@@ -20,6 +20,8 @@ uv venv --python 3.9.11
 source .venv/bin/activate
 # Windows (PowerShell):
 # .\.venv\Scripts\Activate.ps1
+# Windows (cmd):
+# .\.venv\Scripts\activate.bat
 
 uv pip install -e .
 ```
