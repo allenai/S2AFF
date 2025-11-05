@@ -2,7 +2,7 @@ import logging
 import os
 import ntpath
 from pathlib import Path
-from util.s3 import get_ror_version
+from s2aff.util.s3 import get_ror_version
 
 logger = logging.getLogger("s2aff")
 

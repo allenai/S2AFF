@@ -1,13 +1,16 @@
 from collections import Counter
 
+import numpy as np
 import pytest
 
 from s2aff.ror import (
     RORIndex,
     coerce_v2_to_v1like,
     get_special_tokens_dict,
+    index_min,
     normalize_geoname_id,
     parse_ror_entry_into_single_string,
+    sum_list_of_list_of_tuples,
 )
 
 
@@ -122,3 +125,23 @@ def test_extract_isni_and_map_to_ror_single_match():
         == "https://ror.org/ror-3"
     )
     assert index.extract_isni_and_map_to_ror("ISNI 0000 0001 2345 6789 and 0000 1111 2222 3333") is None
+
+
+def test_index_min_returns_first_matching_position():
+    data = ["a", "b", "c", "d", "b"]
+    assert index_min(data, {"b", "z"}) == 1
+
+
+def test_index_min_returns_large_default_when_missing():
+    assert index_min(["x", "y"], {"z"}) == 100000
+
+
+def test_sum_list_of_list_of_tuples_supports_log_and_linear():
+    inputs = [
+        [("a", 1.0), ("b", 2.0)],
+        [("a", 2.0)],
+    ]
+    assert sum_list_of_list_of_tuples(inputs) == {"a": 3.0, "b": 2.0}
+    logged = sum_list_of_list_of_tuples(inputs, use_log=True)
+    assert pytest.approx(logged["a"], rel=1e-6) == np.log1p(1.0) + np.log1p(2.0)
+    assert pytest.approx(logged["b"], rel=1e-6) == np.log1p(2.0)
