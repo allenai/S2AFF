@@ -24,9 +24,6 @@ jobs:
           - os: windows-latest
             python-version: '3.9'
             architecture: 'x64'
-          - os: macos-13
-            python-version: '3.9'
-            architecture: 'x64'
       fail-fast: false
 
     steps:
