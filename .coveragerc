@@ -1,0 +1,12 @@
+[run]
+source = s2aff
+omit =
+    */tests/*
+    s2aff/timo/*
+    */__pycache__/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError

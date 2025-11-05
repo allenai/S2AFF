@@ -1,7 +1,7 @@
 import re
 import numpy as np
 from nltk.util import ngrams
-from s2aff.text import fix_text, STOPWORDS
+from s2aff.text import fix_text, STOPWORDS, normalize_geoname_id
 
 
 def parse_ror_entry_into_single_string_lightgbm(ror_id_or_other_affiliation, ror_index):
@@ -43,8 +43,20 @@ def parse_ror_entry_into_single_string_lightgbm(ror_id_or_other_affiliation, ror
         # sometimes the state code is just a number - remove it if so
         state_code = [fix_text(i).lower().replace(",", "") for i in state_code if i.isalpha()]
 
-        # country
-        country_and_codes = ror_index.country_codes_dict[ror_entry["addresses"][0]["country_geonames_id"]]
+        # country (ensure geonames id fallback to ISO2 for ROR v2 records)
+        addr0 = ror_entry["addresses"][0]
+        country_and_codes = None
+        geoid = normalize_geoname_id(addr0.get("country_geonames_id"))
+        if geoid and geoid in ror_index.country_codes_dict:
+            country_and_codes = ror_index.country_codes_dict[geoid]
+        else:
+            iso2 = (addr0.get("country_code") or "").upper()
+            if iso2:
+                country_and_codes = ror_index.country_by_iso2.get(iso2)
+
+        if country_and_codes is None:
+            country_and_codes = ["", "", "", ""]
+
         if country_and_codes[0] == "China":
             extras = ["PR", "PRC"]
         else:

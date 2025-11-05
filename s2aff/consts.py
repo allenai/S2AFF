@@ -2,7 +2,7 @@ import logging
 import os
 import ntpath
 from pathlib import Path
-from util.s3 import get_ror_version
+from s2aff.util.s3 import get_ror_version
 
 logger = logging.getLogger("s2aff")
 
@@ -14,7 +14,7 @@ except NameError:
 
 CACHE_ROOT = Path(os.getenv("S2AFF_CACHE", str(Path.home() / ".s2aff")))
 
-DEFAULT_ROR_VERSION = "v1.70-2025-08-26"
+DEFAULT_ROR_VERSION = "v1.73-2025-10-28"
 
 
 ROR_VERSION = get_ror_version()

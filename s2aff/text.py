@@ -1,4 +1,5 @@
 import re
+import numpy as np
 from text_unidecode import unidecode
 import pandas as pd
 
@@ -103,3 +104,21 @@ def fix_text(s):
     s = RE_BASIC.sub(" ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def normalize_geoname_id(value):
+    """Normalize Geonames identifiers to consistent string keys."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if isinstance(value, (np.integer, int)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        if np.isnan(value):
+            return None
+        if float(value).is_integer():
+            return str(int(value))
+        return str(value)
+    return str(value)

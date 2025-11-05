@@ -20,7 +20,7 @@ from s2aff.consts import (
 )
 from s2aff.file_cache import cached_path
 from s2aff.model import parse_ner_prediction
-from s2aff.text import STOPWORDS, fix_text, INVERTED_ABBREVIATION_DICTIONARY
+from s2aff.text import STOPWORDS, fix_text, INVERTED_ABBREVIATION_DICTIONARY, normalize_geoname_id
 
 ror_extractor = re.compile(r"(?:https?://)?ror\.org/(0[a-z0-9]{8})", re.I)
 grid_extractor = re.compile(r"(grid\.\d{4,6}\.[0-9a-f]{1,2})")
@@ -70,24 +70,6 @@ def sum_list_of_list_of_tuples(dicts, use_log=False):
             else:
                 ret[k] += v
     return dict(ret)
-
-
-def normalize_geoname_id(value):
-    """Normalize Geonames identifiers to consistent string keys."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    if isinstance(value, (np.integer, int)):
-        return str(int(value))
-    if isinstance(value, (float, np.floating)):
-        if np.isnan(value):
-            return None
-        if float(value).is_integer():
-            return str(int(value))
-        return str(value)
-    return str(value)
 
 
 def v2_display_name(rec):

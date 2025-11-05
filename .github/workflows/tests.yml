@@ -1,0 +1,146 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, tests]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run full tests weekly on Monday at 2am UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    # Allow manual triggering of full tests
+
+jobs:
+  fast-tests:
+    name: Fast Unit Tests (No Model Downloads)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: '3.9'
+            architecture: 'x64'
+          - os: windows-latest
+            python-version: '3.9'
+            architecture: 'x64'
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.architecture }}
+          cache: 'pip'
+          cache-dependency-path: 'requirements.in'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Run fast tests (no model downloads)
+        run: |
+          pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term --cov-report=xml -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  full-tests:
+    name: Full Tests (With Models)
+    # Only run on schedule, manual trigger, or pushes to main
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.in'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Install AWS CLI
+        run: |
+          pip install awscli
+
+      - name: Download models from S3
+        run: |
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ner_model/ data/ner_model/
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/pairwise_model/ data/pairwise_model/
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ data/ --exclude "ner_model/*" --exclude "pairwise_model/*"
+
+      - name: Verify models downloaded
+        run: |
+          ls -lh data/
+          if [ ! -d "data/ner_model" ]; then echo "NER model missing"; exit 1; fi
+          if [ ! -d "data/pairwise_model" ]; then echo "Pairwise model missing"; exit 1; fi
+
+      - name: Run all tests including integration
+        run: |
+          pytest --cov=s2aff --cov-report=term --cov-report=xml --cov-fail-under=50 -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: integration
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  coverage-check:
+    name: Coverage Threshold Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.in'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov
+
+      - name: Run tests with coverage threshold
+        run: |
+          pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-fail-under=48 -v
+
+      - name: Generate coverage report
+        if: always()
+        run: |
+          pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-report=html
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
