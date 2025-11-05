@@ -66,7 +66,7 @@ To update the ROR database used by default
 1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
 To update openalex:
 2. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
-3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` and delete the old ROR json from there.
+3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/`
 
 
 
@@ -165,6 +165,38 @@ reranked_candidates, reranked_scores = pairwise_model.predict(raw_affiliation, c
 for i, j in zip(reranked_candidates[:5], reranked_scores[:5]):
     print(ror_index.ror_dict[i]["name"], j)
 ```
+
+## Testing
+
+### Quick Start
+To run the fast unit test suite without pulling large artifacts:
+
+```bash
+pytest -m "not slow and not requires_models"
+```
+
+This runs 44 unit tests that test core functionality without requiring model downloads.
+
+### Full Test Suite
+Run the full suite including integration tests (requires downloading models first):
+
+```bash
+pytest
+```
+
+This runs all 57 tests including 13 integration tests that require the NER model, ROR index, and LightGBM model.
+
+### Coverage
+Generate a coverage report:
+
+```bash
+pytest --cov=s2aff --cov-report=term-missing
+```
+
+### Continuous Integration
+The project uses GitHub Actions for CI with two test jobs:
+- **Fast Tests**: Run on every push/PR without model downloads (~20 seconds)
+- **Full Tests**: Run weekly or on-demand with models (~5 minutes, downloads ~3.4GB once)
 
 ## Why Not Rerank with BERT?
 Because it's worse! We couldn't make `roberta-large` any better than what you see below (validation scores).

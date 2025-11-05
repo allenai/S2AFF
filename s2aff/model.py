@@ -151,12 +151,16 @@ class NERPredictor:
     Uses SimpleTransformers under the hood.
     """
 
-    def __init__(self, model_path=PATHS["ner_model"], model_type="roberta", use_cuda=True):
+    def __init__(self, model_path=PATHS["ner_model"], model_type="roberta", use_cuda=True, model=None):
         self.model_path = model_path
         self.model_type = model_type
         self.use_cuda = use_cuda
-        if self.model_path is not None:
+        if model is not None:
+            self.model = model
+        elif self.model_path is not None:
             self.load_model(self.model_path, self.model_type)
+        else:
+            self.model = None
 
     def load_model(self, model_path=PATHS["ner_model"], model_type="roberta"):
         """Load a model from disk.
@@ -277,6 +281,9 @@ class NERPredictor:
 
         texts = [text_to_words(fix_text(text)) for text in texts]
 
+        if self.model is None:
+            raise ValueError("NERPredictor has no underlying model; load or provide one before predicting.")
+
         predictions = self.model.predict(texts)[0]  # [1] are the scores
 
         if input_was_single_text:
@@ -287,13 +294,25 @@ class NERPredictor:
 
 class PairwiseRORLightGBMReranker:
     def __init__(
-        self, ror_index, model_path=PATHS["lightgbm_model"], kenlm_model_path=PATHS["kenlm_model"], num_threads=0
+        self,
+        ror_index,
+        model_path=PATHS["lightgbm_model"],
+        kenlm_model_path=PATHS["kenlm_model"],
+        num_threads=0,
+        booster=None,
+        language_model=None,
     ):
         self.ror_index = ror_index
         self.model_path = model_path
         self.kenlm_model_path = kenlm_model_path
-        self.load_model(model_path)
-        self.lm = kenlm.LanguageModel(kenlm_model_path)
+        if booster is not None:
+            self.model = booster
+        else:
+            self.load_model(model_path)
+        if language_model is not None:
+            self.lm = language_model
+        else:
+            self.lm = kenlm.LanguageModel(kenlm_model_path)
         self.num_threads = num_threads
 
         self.inds_to_check = [
