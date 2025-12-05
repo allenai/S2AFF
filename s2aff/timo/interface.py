@@ -7,7 +7,7 @@ as a definition of the objects it expects, and those it returns.
 """
 
 from typing import List
-from os.path import join, basename
+from os.path import join, basename, exists
 import torch
 
 from pydantic import BaseModel, BaseSettings, Field
@@ -83,6 +83,13 @@ class Predictor:
         self._artifacts_dir = artifacts_dir
         self._load_model()
 
+    def _get_artifact_path(self, path_key: str) -> str:
+        """Get artifact path, falling back to public S3 URL if not in artifacts dir."""
+        local_path = join(self._artifacts_dir, basename(PATHS[path_key]))
+        if exists(local_path):
+            return local_path
+        return PATHS[path_key]
+
     def _load_model(self) -> None:
         """
         Perform whatever start-up operations are required to get your
@@ -90,17 +97,17 @@ class Predictor:
         during the application life-cycle.
         """
         ner_predictor = NERPredictor(
-            model_path=join(self._artifacts_dir, basename(PATHS["ner_model"])), use_cuda=torch.cuda.is_available()
+            model_path=self._get_artifact_path("ner_model"), use_cuda=torch.cuda.is_available()
         )
         ror_index = RORIndex(
-            ror_data_path=join(self._artifacts_dir, basename(PATHS["ror_data"])),
-            country_info_path=join(self._artifacts_dir, basename(PATHS["country_info"])),
-            works_counts_path=join(self._artifacts_dir, basename(PATHS["openalex_works_counts"])),
+            ror_data_path=self._get_artifact_path("ror_data"),
+            country_info_path=self._get_artifact_path("country_info"),
+            works_counts_path=self._get_artifact_path("openalex_works_counts"),
         )
         pairwise_model = PairwiseRORLightGBMReranker(
             ror_index,
-            model_path=join(self._artifacts_dir, basename(PATHS["lightgbm_model"])),
-            kenlm_model_path=join(self._artifacts_dir, basename(PATHS["kenlm_model"])),
+            model_path=self._get_artifact_path("lightgbm_model"),
+            kenlm_model_path=self._get_artifact_path("kenlm_model"),
         )
         self.s2aff = S2AFF(ner_predictor, ror_index, pairwise_model)
 
