@@ -89,13 +89,18 @@ class S2AFF:
         ner_predictions = self.ner_predictor.predict(raw_affiliations)
         print("Done")
 
-        outputs = []
+        # Phase 1: Get candidates for all affiliations (sequential but fast - mostly dict lookups)
+        print("Getting ROR candidates for all affiliations...")
+        all_candidates = []
+        all_scores = []
+        all_metadata = []  # Store parsed NER results and flags
+
         for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
-            print(
-                f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
-                end="\r",
-            )
+            if (counter + 1) % 10 == 0 or counter == 0:
+                print(f"  Progress: {counter+1}/{len(raw_affiliations)}", end="\r")
+
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
+
             # sometimes the affiliation strings just contain GRID, ISNI, or ROR ids directly
             if self.look_for_extractable_ids:
                 ror_extracted = self.ror_index.extract_ror(raw_affiliation)
@@ -107,12 +112,61 @@ class S2AFF:
                     candidates, scores = [ror_from_extracted_id], [1.0]
             else:
                 found_early = False
+
             # we don't want to rerank if we found a GRID or ISNI id
             if not found_early:
                 candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
                     main, address, early_candidates
                 )
 
+            all_candidates.append(candidates)
+            all_scores.append(scores)
+            all_metadata.append({
+                "main": main,
+                "child": child,
+                "address": address,
+                "found_early": found_early,
+                "ner_prediction": ner_prediction
+            })
+
+        print(f"  Progress: {len(raw_affiliations)}/{len(raw_affiliations)} - Done")
+
+        # Phase 2: Batch rerank all affiliations that need reranking
+        print("Batch reranking candidates...")
+        needs_reranking = []
+
+        for i, (candidates, scores, metadata) in enumerate(zip(all_candidates, all_scores, all_metadata)):
+            # Skip if: no candidates, only 1 candidate, or found early (GRID/ISNI/ROR)
+            if len(candidates) > 1 and not metadata["found_early"]:
+                needs_reranking.append(i)
+
+        if needs_reranking:
+            # Prepare batch reranking inputs
+            batch_affiliations = [raw_affiliations[i] for i in needs_reranking]
+            batch_candidates = [all_candidates[i][: self.top_k_first_stage] for i in needs_reranking]
+            batch_scores = [all_scores[i][: self.top_k_first_stage] for i in needs_reranking]
+
+            # Batch rerank - this is where the speedup happens!
+            reranked_candidates_list, reranked_scores_list = self.pairwise_model.batch_predict(
+                batch_affiliations, batch_candidates, batch_scores
+            )
+
+            # Update results with reranked candidates
+            for idx, rerank_idx in enumerate(needs_reranking):
+                all_candidates[rerank_idx] = reranked_candidates_list[idx]
+                all_scores[rerank_idx] = reranked_scores_list[idx]
+
+        print("Done")
+
+        # Phase 3: Apply thresholds and format outputs
+        print("Formatting outputs...")
+        outputs = []
+        for i, raw_affiliation in enumerate(raw_affiliations):
+            candidates = all_candidates[i]
+            scores = all_scores[i]
+            metadata = all_metadata[i]
+
+            # Apply thresholds
             if len(candidates) == 0:
                 output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
             elif len(candidates) == 1:
@@ -120,21 +174,17 @@ class S2AFF:
                     output_scores_and_thresh = ([self.no_ror_output_text], [0.0])
                 else:
                     output_scores_and_thresh = (candidates, scores)
-
             else:
-                reranked_candidates, reranked_scores = self.pairwise_model.predict(
-                    raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
-                )
-                # apply threshold to reranked scores
-                if len(reranked_candidates) == 0:
+                # Already reranked in batch
+                if len(candidates) == 0:
                     output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
-                elif reranked_scores[0] < self.pairwise_model_threshold and (
-                    len(reranked_candidates) == 1
-                    or reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold
+                elif scores[0] < self.pairwise_model_threshold and (
+                    len(candidates) == 1
+                    or scores[0] - scores[1] < self.pairwise_model_delta_threshold
                 ):
                     output_scores_and_thresh = [self.no_ror_output_text], [0.0]
                 else:
-                    output_scores_and_thresh = (reranked_candidates, reranked_scores)
+                    output_scores_and_thresh = (candidates, scores)
 
             try:
                 display_name = self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
@@ -144,16 +194,18 @@ class S2AFF:
             # make a dict of outputs
             output = {
                 "raw_affiliation": raw_affiliation,
-                "ner_prediction": ner_prediction,
-                "main_from_ner": main,
-                "child_from_ner": child,
-                "address_from_ner": address,
-                "stage1_candidates": list(candidates[: self.number_of_top_candidates_to_return]),
-                "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
+                "ner_prediction": metadata["ner_prediction"],
+                "main_from_ner": metadata["main"],
+                "child_from_ner": metadata["child"],
+                "address_from_ner": metadata["address"],
+                "stage1_candidates": list(all_candidates[i][: self.number_of_top_candidates_to_return]),
+                "stage1_scores": list(all_scores[i][: self.number_of_top_candidates_to_return]),
                 "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
                 "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
                 "top_candidate_display_name": display_name,
             }
 
             outputs.append(output)
+
+        print("Done")
         return outputs

@@ -354,6 +354,7 @@ class PairwiseRORLightGBMReranker:
         Args:
             raw_affiliation (str): Raw affiliation string.
             candidates (list[str]): List of candidate ROR ids.
+            scores (list[float]): List of candidate scores from first stage.
 
         Returns:
             reranked_candidates (np.array[str]): Array of candidate ROR ids
@@ -375,3 +376,75 @@ class PairwiseRORLightGBMReranker:
         scores_argsort = np.argsort(scores)[::-1]
         reranked = np.vstack([np.array(candidates), scores]).T[scores_argsort]
         return reranked[:, 0], reranked[:, 1].astype(float)
+
+    def batch_predict(self, raw_affiliations, candidates_list, scores_list):
+        """
+        Batch version of predict that processes multiple affiliations at once.
+
+        This is significantly faster than calling predict() in a loop because:
+        1. LightGBM can batch predict all features at once
+        2. Feature extraction can be more efficient
+
+        Args:
+            raw_affiliations (list[str]): List of raw affiliation strings
+            candidates_list (list[list[str]]): List of candidate lists (one per affiliation)
+            scores_list (list[list[float]]): List of score lists (one per affiliation)
+
+        Returns:
+            reranked_candidates_list (list[np.array[str]]): List of reranked candidate arrays
+            reranked_scores_list (list[np.array[float]]): List of reranked score arrays
+        """
+        # Build feature matrix for all affiliation-candidate pairs
+        X_all = []
+        split_indices = [0]  # Track where each affiliation's candidates start/end
+
+        for raw_affiliation, candidates, scores in zip(raw_affiliations, candidates_list, scores_list):
+            fixed_affiliation_string = fix_text(raw_affiliation).lower().replace(",", "")
+
+            # Build features for this affiliation's candidates
+            for candidate_id, score in zip(candidates, scores):
+                ror_entry = parse_ror_entry_into_single_string_lightgbm(candidate_id, self.ror_index)
+                x = make_lightgbm_features(fixed_affiliation_string, ror_entry, self.lm)
+                x[-3:] = [score, int(score == -0.15), int(score == -0.1)]
+                X_all.append(x)
+
+            split_indices.append(len(X_all))
+
+        # If no candidates for any affiliation, return empty lists
+        if len(X_all) == 0:
+            return [np.array([]) for _ in raw_affiliations], [np.array([]) for _ in raw_affiliations]
+
+        # Batch predict all at once
+        X_all = np.array(X_all)
+        all_scores = self.model.predict(X_all, num_threads=self.num_threads)
+
+        # Apply penalties
+        has_no_match = X_all[:, self.inds_to_check].sum(1) == 0
+        all_scores -= 0.05 * has_no_match
+        all_scores += 0.05 * X_all[:, self.city_ind]
+
+        # Split results back to each affiliation and re-rank
+        reranked_candidates_list = []
+        reranked_scores_list = []
+
+        for i in range(len(raw_affiliations)):
+            start_idx = split_indices[i]
+            end_idx = split_indices[i + 1]
+
+            if start_idx == end_idx:  # No candidates for this affiliation
+                reranked_candidates_list.append(np.array([]))
+                reranked_scores_list.append(np.array([]))
+                continue
+
+            # Get scores and candidates for this affiliation
+            affiliation_scores = all_scores[start_idx:end_idx]
+            affiliation_candidates = candidates_list[i]
+
+            # Re-rank
+            scores_argsort = np.argsort(affiliation_scores)[::-1]
+            reranked = np.vstack([np.array(affiliation_candidates), affiliation_scores]).T[scores_argsort]
+
+            reranked_candidates_list.append(reranked[:, 0])
+            reranked_scores_list.append(reranked[:, 1].astype(float))
+
+        return reranked_candidates_list, reranked_scores_list
