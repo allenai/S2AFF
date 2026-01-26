@@ -266,14 +266,25 @@ class lightgbmExperiment(Experiment):
             params["num_class"] = len(np.unique(dtrain.get_label()))
 
         evals_result = {}
-        bst = lgb.train(
-            params,
-            dtrain,
-            valid_sets=dtest,
-            valid_names=["test"],
-            evals_result=evals_result,
-            num_boost_round=n_estimators,
-        )
+        try:
+            bst = lgb.train(
+                params,
+                dtrain,
+                valid_sets=dtest,
+                valid_names=["test"],
+                evals_result=evals_result,
+                num_boost_round=n_estimators,
+            )
+        except TypeError:
+            evals_result = {}
+            bst = lgb.train(
+                params,
+                dtrain,
+                valid_sets=dtest,
+                valid_names=["test"],
+                num_boost_round=n_estimators,
+                callbacks=[lgb.record_evaluation(evals_result)],
+            )
 
         if self.eval_metric in {"ndcg", "map"}:
             key = f"{self.eval_metric}@1"

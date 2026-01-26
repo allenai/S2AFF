@@ -8,9 +8,9 @@ simpletransformers
 awscli
 boto3
 nltk
-pypi-kenlm
+camel-kenlm==2025.9.16
 hyperopt
-lightgbm
+lightgbm==4.6.0
 torch
 pydantic
 pytest

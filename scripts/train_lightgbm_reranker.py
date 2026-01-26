@@ -1,12 +1,24 @@
+import os
 import pickle
 import numpy as np
 import sklearn
 import lightgbm as lgb
+import kenlm
 from s2aff.ror import RORIndex
 from s2aff.text import fix_text
 from s2aff.consts import PATHS
 from s2aff.lightgbm_helpers import lightgbmExperiment
-from s2aff.features import FEATURE_CONSTRAINTS, FEATURE_NAMES
+from s2aff.features import (
+    FEATURE_CONSTRAINTS,
+    FEATURE_NAMES,
+    build_query_context,
+    make_lightgbm_features_with_query_context,
+    parse_ror_entry_into_single_string_lightgbm,
+)
+from s2aff.data import load_gold_affiliation_annotations
+from s2aff.model import NERPredictor, parse_ner_prediction
+from s2aff.rust_backend import get_rust_backend, rust_available
+from s2aff.flags import get_stage1_variant
 
 FEATURE_NAMES = list(FEATURE_NAMES)
 
@@ -17,6 +29,160 @@ inds_to_check = [
 
 city_ind = FEATURE_NAMES.index("city_frac_of_query_matched_in_text")
 stage_1_ind = FEATURE_NAMES.index("stage_1_score")
+USE_RUST = rust_available()
+REBUILD_FEATURES = os.getenv("S2AFF_REBUILD_LGBM_FEATURES", "").lower() in {"1", "true", "yes", "on"}
+STAGE1_VARIANT = get_stage1_variant()
+USE_CUDA = os.getenv("S2AFF_USE_CUDA", "0").lower() in {"1", "true", "yes", "y"}
+SKIP_SHAP = os.getenv("S2AFF_SKIP_SHAP", "1").lower() in {"1", "true", "yes", "on"}
+
+
+def _build_pairwise_data_rust(
+    df_gold,
+    lm,
+    ror_index,
+    split_str="train",
+    n_negatives=100,
+    pos_weight=10,
+    use_alt_pos=True,
+):
+    if split_str is not None:
+        df_sub = df_gold[df_gold.split == split_str]
+    else:
+        df_sub = df_gold
+
+    parsed = [parse_ner_prediction(pred, ror_index) for pred in df_sub.parsed_affiliations]
+    mains = [main for main, _, _, _ in parsed]
+    addresses = [address for _, _, address, _ in parsed]
+    early_candidates_list = [early for _, _, _, early in parsed]
+
+    if STAGE1_VARIANT == "v7" and hasattr(
+        ror_index, "get_candidates_from_main_affiliation_v7_batch"
+    ):
+        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_v7_batch(
+            mains, addresses, early_candidates_list
+        )
+    else:
+        candidates_list = []
+        scores_list = []
+        for main, address, early_candidates in zip(mains, addresses, early_candidates_list):
+            if STAGE1_VARIANT == "v7" and hasattr(
+                ror_index, "get_candidates_from_main_affiliation_v7"
+            ):
+                candidates, scores = ror_index.get_candidates_from_main_affiliation_v7(
+                    main, address, early_candidates
+                )
+            else:
+                candidates, scores = ror_index.get_candidates_from_main_affiliation(
+                    main, address, early_candidates
+                )
+            candidates_list.append(candidates)
+            scores_list.append(scores)
+
+    ror_entry_cache = {}
+
+    def get_ror_entry(ror_id):
+        cached = ror_entry_cache.get(ror_id)
+        if cached is not None:
+            return cached
+        value = parse_ror_entry_into_single_string_lightgbm(ror_id, ror_index)
+        ror_entry_cache[ror_id] = value
+        return value
+
+    queries = []
+    candidates_by_query = []
+    scores_by_query = []
+    labels_by_query = []
+    weights_by_query = []
+    rors_by_query = []
+    qs_by_query = []
+    group_ids = []
+
+    outer_ind = 0
+    for (row, parsed_tuple, candidates, scores) in zip(
+        df_sub.itertuples(), parsed, candidates_list, scores_list
+    ):
+        main, child, address, early_candidates = parsed_tuple
+        gold = set(row.labels)
+        candidates_scores_map = {c: s for c, s in zip(candidates, scores)}
+        candidates_positives = [(i, candidates_scores_map.get(i, 0.001)) for i in gold]
+        candidates_negatives = [
+            (i, s)
+            for i, s in zip(candidates[:n_negatives], scores[:n_negatives])
+            if i not in gold
+        ]
+        if candidates_negatives:
+            candidates_negatives_ids, candidates_negatives_scores = zip(*candidates_negatives)
+        else:
+            candidates_negatives_ids, candidates_negatives_scores = [], []
+
+        original_affiliation_fixed = fix_text(row.original_affiliation).lower().replace(",", "")
+        main_fixed = fix_text(" ".join(main)).lower().replace(",", "")
+        address_fixed = fix_text(" ".join(address)).lower().replace(",", "")
+
+        def add_group(query_text, suffix=""):
+            nonlocal outer_ind
+            pos_ids = [i for i, _ in candidates_positives]
+            pos_scores = [s for _, s in candidates_positives]
+            neg_ids = list(candidates_negatives_ids)
+            neg_scores = list(candidates_negatives_scores)
+
+            candidates_group = pos_ids + neg_ids
+            scores_group = pos_scores + neg_scores
+            labels_group = [1] * len(pos_ids) + [0] * len(neg_ids)
+            weights_group = [pos_weight] * len(pos_ids) + [1] * len(neg_ids)
+
+            queries.append(query_text)
+            candidates_by_query.append(candidates_group)
+            scores_by_query.append(scores_group)
+            labels_by_query.append(labels_group)
+            weights_by_query.append(weights_group)
+            rors_by_query.append(candidates_group)
+            qs_by_query.append(query_text + suffix)
+            group_ids.append(outer_ind)
+            outer_ind += 1
+
+        add_group(original_affiliation_fixed)
+
+        if use_alt_pos:
+            if main_fixed and main_fixed != original_affiliation_fixed:
+                add_group(main_fixed, suffix=" [MAIN ONLY]")
+
+            if address_fixed and (main_fixed + " " + address_fixed) != original_affiliation_fixed:
+                add_group(main_fixed + " " + address_fixed, suffix=" [MAIN+ADDRESS]")
+
+    query_contexts = [build_query_context(q) for q in queries]
+    rust_backend = get_rust_backend(ror_index) if USE_RUST else None
+    if rust_backend is not None:
+        X_all, split_indices = rust_backend.build_lightgbm_features_with_query_context_batch(
+            lm, query_contexts, candidates_by_query, get_ror_entry
+        )
+        if len(X_all) == 0:
+            X_all = np.array([])
+    else:
+        X_all_list = []
+        for query_context, candidates in zip(query_contexts, candidates_by_query):
+            for candidate_id in candidates:
+                ror_entry = get_ror_entry(candidate_id)
+                x = make_lightgbm_features_with_query_context(query_context, ror_entry, lm)
+                X_all_list.append(x)
+        X_all = np.array(X_all_list)
+
+    if len(X_all):
+        flat_scores = [s for scores in scores_by_query for s in scores]
+        if len(flat_scores) == len(X_all):
+            X_all[:, -3] = flat_scores
+            X_all[:, -2] = [int(s == -0.15) for s in flat_scores]
+            X_all[:, -1] = [int(s == -0.1) for s in flat_scores]
+
+    y = np.array([label for labels in labels_by_query for label in labels])
+    w = np.array([weight for weights in weights_by_query for weight in weights], dtype=np.float32)
+    group = np.array(
+        [group_ids[i] for i in range(len(group_ids)) for _ in candidates_by_query[i]]
+    )
+    rors = np.array([ror for rors in rors_by_query for ror in rors])
+    qs = np.array([qs for qs, rors in zip(qs_by_query, rors_by_query) for _ in rors])
+
+    return X_all, y, w, group, rors, qs
 
 
 def eval_lgb(y, X, scores, group, weight=0.05):
@@ -70,6 +236,59 @@ but there are some differences:
 - don't need year, citations, oldness, special treatment for authors, special treatment for quotes
 - some fields have multiple entries, so need to combine those somehow
 """
+
+if REBUILD_FEATURES:
+    if not USE_RUST:
+        raise RuntimeError("S2AFF_REBUILD_LGBM_FEATURES requires S2AFF_PIPELINE=rust")
+    print("Rebuilding lightgbm_gold_features with rust-enabled pipeline...")
+    df_gold = load_gold_affiliation_annotations()
+    ner_predictor = NERPredictor(use_cuda=USE_CUDA)
+    parsed_affiliations = ner_predictor.predict(df_gold.loc[:, "original_affiliation"].values)
+    df_gold.loc[:, "parsed_affiliations"] = parsed_affiliations
+    ner_predictor.delete_model()
+
+    lm = kenlm.LanguageModel(PATHS["kenlm_model"])
+    ror_index = RORIndex()
+    if get_rust_backend(ror_index) is None:
+        raise RuntimeError("Rust backend not available; cannot rebuild features")
+
+    X_train, y_train, w_train, group_train, rors_train, qs_train = _build_pairwise_data_rust(
+        df_gold,
+        lm,
+        ror_index,
+        split_str="train",
+        n_negatives=100,
+        use_alt_pos=True,
+        pos_weight=10,
+    )
+    X_val, y_val, w_val, group_val, rors_val, qs_val = _build_pairwise_data_rust(
+        df_gold,
+        lm,
+        ror_index,
+        split_str="val",
+        n_negatives=100,
+        use_alt_pos=False,
+        pos_weight=10,
+    )
+    X_test, y_test, w_test, group_test, rors_test, qs_test = _build_pairwise_data_rust(
+        df_gold,
+        lm,
+        ror_index,
+        split_str="test",
+        n_negatives=100,
+        use_alt_pos=False,
+        pos_weight=10,
+    )
+
+    with open(PATHS["lightgbm_gold_features"], "wb") as f:
+        pickle.dump(
+            [
+                (X_train, y_train, w_train, group_train, rors_train, qs_train),
+                (X_val, y_val, w_val, group_val, rors_val, qs_val),
+                (X_test, y_test, w_test, group_test, rors_test, qs_test),
+            ],
+            f,
+        )
 
 with open(PATHS["lightgbm_gold_features"], "rb") as f:
     [
@@ -131,9 +350,14 @@ test_results = eval_lgb(y_test, X_test, lgb_exp.bst.predict(X_test), group_test)
 # save model
 lgb_exp.bst.save_model(PATHS["lightgbm_model"])
 
+# optional SHAP analysis (skipped by default)
+if SKIP_SHAP:
+    print("Skipping SHAP analysis (set S2AFF_SKIP_SHAP=0 to enable).")
+    raise SystemExit(0)
+
 # look at results manually
 import shap
-from s2aff.features import parse_ror_entry_into_single_string_lightgbm
+
 
 ror_index = RORIndex()
 

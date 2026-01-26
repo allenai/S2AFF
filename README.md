@@ -13,8 +13,8 @@ To install this package, run the following (uv):
 ```
 git clone git@github.com:allenai/S2AFF.git
 cd S2AFF
-uv python install 3.9.11
-uv venv --python 3.9.11
+uv python install 3.11.13
+uv venv --python 3.11.13
 
 # macOS/Linux:
 source .venv/bin/activate
@@ -31,7 +31,7 @@ or (conda)
 ```bash
 git clone git@github.com:allenai/S2AFF.git
 cd S2AFF
-conda create -y --name s2aff python==3.9.11
+conda create -y --name s2aff python==3.11
 conda activate s2aff
 pip install -e .
 ```
@@ -43,6 +43,61 @@ If you run into cryptic errors about GCC on macOS while installing the requireme
 ```bash
 CFLAGS='-stdlib=libc++' pip install -e .
 ```
+
+**Python + core deps**
+- Python: 3.11.x (tested with 3.11.13)
+- `camel-kenlm` (kenlm bindings) and `lightgbm==4.6.0` are required. `camel-kenlm` may build from source, so make sure
+  you have a working C++ toolchain (MSVC on Windows, clang/gcc on macOS/Linux).
+
+## Optional: Rust Acceleration
+Rust is optional. If installed, it becomes the default path and S2AFF falls back to the Python pipeline when Rust is unavailable.
+
+**Build requirements**
+- Rust toolchain (rustup)
+- `maturin`
+
+**macOS/Linux**
+```bash
+# install rust (if needed)
+curl https://sh.rustup.rs -sSf | sh
+source $HOME/.cargo/env
+
+# from repo root with your venv active
+python -m pip install maturin
+cd s2aff_rust
+python -m maturin develop --release
+```
+
+**Windows (PowerShell)**
+```powershell
+# install rust (if needed) via rustup-init.exe or winget
+# https://rustup.rs
+
+$env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+.\.venv\Scripts\python.exe -m pip install maturin
+cd s2aff_rust
+.\.venv\Scripts\python.exe -m maturin develop --release --pip-path .\.venv\Scripts\pip.exe
+```
+If you see `rustc is not installed or not in PATH`, make sure `C:\Users\<you>\.cargo\bin` is on PATH (or open a new shell after installing rustup).
+
+**Runtime toggles**
+```bash
+# macOS/Linux
+export S2AFF_PIPELINE=python  # force Python pipeline
+export S2AFF_PIPELINE=rust    # force Rust pipeline (if installed)
+
+# Windows (PowerShell)
+$env:S2AFF_PIPELINE="python"
+$env:S2AFF_PIPELINE="rust"
+```
+Set `S2AFF_PIPELINE=rust` to force Rust usage when it is installed.
+
+**Notes**
+- First run builds a cache file under `~/.s2aff/indices/rust/ror_index_<hash>.bin`.
+- The cache key includes the ROR file stats + settings, so a new ROR version builds a new cache.
+- Use `S2AFF_RUST_LOG=1` for verbose Rust timing logs.
+- No environment variable is required when Rust is installed; set `S2AFF_PIPELINE=python` to force the Python pipeline.
+- `S2AFF_STAGE1_VARIANT` / `S2AFF_STAGE2_VARIANT` are deprecated.
 
 ## Models Download
 
@@ -89,6 +144,25 @@ Data sizes:
 | train |    1132|
 |test  |   644 |
 |val   |   588 |
+
+### Latency (GPU, 100 affiliations)
+Measured on this machine using:
+```
+$env:S2AFF_USE_CUDA="1"; $env:S2AFF_PIPELINE="python"; uv run --python .venv python scripts/approximate_runtime_and_memory_usage.py
+$env:S2AFF_USE_CUDA="1"; $env:S2AFF_PIPELINE="rust"; uv run --python .venv python scripts/approximate_runtime_and_memory_usage.py
+```
+
+**Python pipeline** (Measured Jan 24, 2026):
+- NER: **2.061s**
+- Stage 1 candidates: **48.745s**
+- LightGBM rerank (top 100): **25.492s**
+- Total timed stages: **~76.30s**
+
+**Rust pipeline** (Measured Jan 26, 2026; Rust cache hit):
+- NER: **1.981s**
+- Stage 1 candidates: **2.760s**
+- LightGBM rerank (top 100): **7.361s**
+- Total timed stages: **~12.10s**
 
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
@@ -175,16 +249,31 @@ To run the fast unit test suite without pulling large artifacts:
 pytest -m "not slow and not requires_models"
 ```
 
-This runs 44 unit tests that test core functionality without requiring model downloads.
+This runs the fast unit tests that test core functionality without requiring model downloads.
 
 ### Full Test Suite
-Run the full suite including integration tests (requires downloading models first):
+Run the full suite including integration tests (requires downloaded models):
 
 ```bash
 pytest
 ```
 
-This runs all 57 tests including 13 integration tests that require the NER model, ROR index, and LightGBM model.
+When the model files are present under `data/`, tests marked `requires_models` run automatically.
+To force-run even if models are not detected, use `--run-requires-models` or set `S2AFF_RUN_REQUIRES_MODELS=1`.
+To skip them even when models are present, set `S2AFF_SKIP_REQUIRES_MODELS=1`.
+
+### Parity Harness (Requires Models)
+Run exact old-vs-new parity checks (stage1, stage2, end2end):
+
+```bash
+uv run --python .venv python scripts/run_parity.py --mode all
+```
+
+To enable CUDA for NER in parity checks:
+
+```bash
+uv run --python .venv python scripts/run_parity.py --mode all --use-cuda
+```
 
 ### Coverage
 Generate a coverage report:

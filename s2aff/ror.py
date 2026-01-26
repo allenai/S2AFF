@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from operator import itemgetter
@@ -70,6 +71,54 @@ def sum_list_of_list_of_tuples(dicts, use_log=False):
             else:
                 ret[k] += v
     return dict(ret)
+
+
+def merge_ranked_lists_with_order(dicts, use_log=False):
+    ret = {}
+    order = []
+    if use_log:
+        for d in dicts:
+            for k, v in d:
+                val = np.log1p(v)
+                if k in ret:
+                    ret[k] += val
+                else:
+                    ret[k] = val
+                    order.append(k)
+    else:
+        for d in dicts:
+            for k, v in d:
+                if k in ret:
+                    ret[k] += v
+                else:
+                    ret[k] = v
+                    order.append(k)
+    return ret, order
+
+
+def merge_ranked_arrays_with_order(ids_list, scores_list, use_log=False):
+    merged_ids = []
+    merged_scores = []
+    for ids, scores in zip(ids_list, scores_list):
+        if ids is None or len(ids) == 0:
+            continue
+        if use_log:
+            scores = np.log1p(scores)
+        merged_ids.append(ids)
+        merged_scores.append(scores)
+
+    if not merged_ids:
+        return np.array([], dtype=np.int32), np.array([], dtype=np.float64)
+
+    ids_all = np.concatenate(merged_ids)
+    scores_all = np.concatenate(merged_scores)
+
+    unique_ids, first_indices, inv = np.unique(ids_all, return_index=True, return_inverse=True)
+    sums = np.bincount(inv, weights=scores_all)
+    order = np.argsort(first_indices)
+    return unique_ids[order], sums[order]
+
+
 
 
 def v2_display_name(rec):
@@ -202,7 +251,8 @@ class RORIndex:
         self.ror_data_path = cached_path(ror_data_path)
         self.country_info_path = cached_path(country_info_path)
         self.ror_edits_path = cached_path(ror_edits_path)
-        works_counts = pd.read_csv(works_counts_path)
+        self.works_counts_path = cached_path(works_counts_path)
+        works_counts = pd.read_csv(self.works_counts_path)
         self.works_counts = {i.ror: i.works_count for i in works_counts.itertuples()}
         self.use_prob_weights = use_prob_weights
         self.word_multiplier = word_multiplier
@@ -211,6 +261,7 @@ class RORIndex:
         self.insert_early_candidates_ind = insert_early_candidates_ind
         self.reinsert_cutoff_frac = reinsert_cutoff_frac
         self.score_based_early_cutoff = score_based_early_cutoff
+        self._rust_backend = None
 
         self.country_codes = pd.read_csv(self.country_info_path, sep="\t")
         self.country_codes_dict = {}
@@ -442,6 +493,45 @@ class RORIndex:
         self.ror_name_direct_lookup = ror_name_direct_lookup
         self.inverse_dict_fixed = inverse_dict_fixed
 
+        # integer-indexed variants for faster retrieval
+        self._typed_keys = list(inverse_dict_fixed.keys())
+        self._typed_key_to_int = {k: i for i, k in enumerate(self._typed_keys)}
+        self._int_to_typed_key = list(self._typed_keys)
+        self._ror_id_list = list(self.ror_dict.keys())
+        self._ror_id_to_int = {k: i for i, k in enumerate(self._ror_id_list)}
+        self._int_to_ror_id = list(self._ror_id_list)
+        self._typed_id_to_ror_id_int = np.fromiter(
+            (self._ror_id_to_int[k.split("__")[0]] for k in self._typed_keys),
+            dtype=np.int32,
+            count=len(self._typed_keys),
+        )
+
+        self.word_index_int = {
+            "inverted_index": {
+                token: np.array(
+                    sorted(self._typed_key_to_int[k] for k in key_set),
+                    dtype=np.int32,
+                )
+                for token, key_set in ror_words_inverted_index.items()
+            },
+            "lengths_index": np.array(
+                [ror_words_lengths_index.get(k, 0) for k in self._typed_keys], dtype=np.float64
+            ),
+        }
+        self.ngram_index_int = {
+            "inverted_index": {
+                token: np.array(
+                    sorted(self._typed_key_to_int[k] for k in key_set),
+                    dtype=np.int32,
+                )
+                for token, key_set in ror_ngrams_inverted_index.items()
+            },
+            "lengths_index": np.array(
+                [ror_ngrams_lengths_index.get(k, 0) for k in self._typed_keys], dtype=np.float64
+            ),
+        }
+
+
     def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor, look_for_extractable_ids=True):
         """A wrapper function that puts the raw affiliation string through the
         NER predictor, parses the predicted output, and fetches the ROR candidates.
@@ -548,7 +638,22 @@ class RORIndex:
         else:
             return [], []
         ranked_before = list(zip(x.index, x))
-        ranked_before = sorted(ranked_before, key=itemgetter(1), reverse=True)
+        tie_scale = 1e12
+
+        def _tie_key(score):
+            scaled = score * tie_scale
+            if scaled >= 0:
+                return int(math.floor(scaled + 0.5))
+            return int(math.ceil(scaled - 0.5))
+
+        ranked_before = sorted(
+            ranked_before,
+            key=lambda pair: (
+                -_tie_key(pair[1]),
+                pair[0].split("__")[0],
+                self._typed_key_to_int.get(pair[0], 0),
+            ),
+        )
 
         # we have multiple appearances of the same grid id
         # keep only the first appearance in the ranked list
@@ -613,6 +718,60 @@ class RORIndex:
         candidates, scores = list(zip(*ranked_after_address_filter))
 
         return candidates, scores
+
+    def _get_rust_backend(self):
+        if self._rust_backend is not None:
+            return self._rust_backend
+        from s2aff.rust_backend import get_rust_backend
+
+        self._rust_backend = get_rust_backend(self)
+        return self._rust_backend
+
+    def get_candidates_from_main_affiliation_v1(self, main, address="", early_candidates=[]):
+        return self.get_candidates_from_main_affiliation(main, address, early_candidates)
+
+    def get_candidates_from_main_affiliation_v7(self, main, address="", early_candidates=[]):
+        rust_backend = self._get_rust_backend()
+        if rust_backend is not None:
+            address_arg = address
+            if isinstance(address_arg, list):
+                address_arg = " ".join(address_arg)
+            return rust_backend.get_candidates_from_main_affiliation_v7(
+                main, address_arg, early_candidates
+            )
+        address_arg = address
+        if isinstance(address_arg, list):
+            address_arg = " ".join(address_arg)
+        return self.get_candidates_from_main_affiliation_v1(main, address_arg, early_candidates)
+
+    def get_candidates_from_main_affiliation_v7_batch(
+        self, mains, addresses=None, early_candidates_list=None
+    ):
+        rust_backend = self._get_rust_backend()
+        if addresses is None:
+            addresses = [""] * len(mains)
+        if early_candidates_list is None:
+            early_candidates_list = [[] for _ in mains]
+        if len(addresses) != len(mains):
+            raise ValueError("addresses length mismatch")
+        if len(early_candidates_list) != len(mains):
+            raise ValueError("early_candidates_list length mismatch")
+        if rust_backend is None:
+            candidates_list = []
+            scores_list = []
+            for main, address, early in zip(mains, addresses, early_candidates_list):
+                address_arg = address
+                if isinstance(address_arg, list):
+                    address_arg = " ".join(address_arg)
+                candidates, scores = self.get_candidates_from_main_affiliation_v1(
+                    main, address_arg, early
+                )
+                candidates_list.append(list(candidates))
+                scores_list.append(list(scores))
+            return candidates_list, scores_list
+        return rust_backend.get_candidates_from_main_affiliation_v7_batch(
+            mains, addresses, early_candidates_list
+        )
 
     def parse_ror_entry_into_single_string(
         self, ror_id, use_separator_tokens=True, shuffle_names=False, special_tokens_dict=get_special_tokens_dict()
@@ -806,6 +965,148 @@ def jaccard_ngram_nns(
     return jaccards
 
 
+def jaccard_ngram_nns_int(
+    candidate,
+    ngram_index,
+    id_to_key,
+    ns=NS,
+    idf_weight=None,
+    max_intersection_denominator=MAX_INTERSECTION_DENOMINATOR,
+    sort=False,
+):
+
+    lengths = ngram_index["lengths_index"]
+    inverted = ngram_index["inverted_index"]
+
+    candidate_ngrams, candidate_ngram_weights = get_text_ngrams(candidate, weights_lookup_f=idf_weight, ns=ns)
+
+    # one issue is when the same ngram appears in a long affiliation string
+    # many times, it ends up being overweighted
+    # hack mitigation: we keep each ngram only once, but the weight
+    # is its max weight
+    candidate_ngrams_unique = set()
+    ngram_largest_weight = {}
+    for ngram, weight in zip(candidate_ngrams, candidate_ngram_weights):
+        if ngram not in candidate_ngrams_unique:
+            candidate_ngrams_unique.add(ngram)
+            ngram_largest_weight[ngram] = np.maximum(weight, ngram_largest_weight.get(ngram, 0))
+
+    all_ids = []
+    all_weights = []
+    candidate_ngrams_in_inverted = []
+    weights_in_inverted = []
+    for ng in sorted(candidate_ngrams_unique):
+        ids = inverted.get(ng)
+        if ids is None or len(ids) == 0:
+            continue
+        weight = float(ngram_largest_weight[ng])
+        all_ids.append(ids)
+        all_weights.append(np.full(len(ids), weight, dtype=np.float64))
+        weights_in_inverted.append(weight)
+        candidate_ngrams_in_inverted.append(ng)
+
+    if not all_ids:
+        return []
+
+    all_ids = np.concatenate(all_ids)
+    all_weights = np.concatenate(all_weights)
+    intersections = np.zeros(len(lengths), dtype=np.float64)
+    np.add.at(intersections, all_ids, all_weights)
+
+    if idf_weight is not None:
+        num_candidate_ngrams = np.sum(candidate_ngram_weights)
+        num_relevant_candidate_ngrams = np.sum(weights_in_inverted)
+    else:
+        num_candidate_ngrams = len(candidate_ngrams)
+        num_relevant_candidate_ngrams = len(candidate_ngrams_in_inverted)
+
+    if max_intersection_denominator:
+        denom = num_relevant_candidate_ngrams + lengths - intersections
+    else:
+        denom = num_candidate_ngrams + lengths - intersections
+
+    scores = intersections / denom
+    ordered_ids = _ordered_unique_ids(all_ids)
+    jaccards = [(id_to_key[i], scores[i]) for i in ordered_ids]
+
+    if sort:
+        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
+
+    return jaccards
+
+
+def jaccard_ngram_nns_int_arrays(
+    candidate,
+    ngram_index,
+    ns=NS,
+    idf_weight=None,
+    max_intersection_denominator=MAX_INTERSECTION_DENOMINATOR,
+    sort=False,
+):
+    lengths = ngram_index["lengths_index"]
+    inverted = ngram_index["inverted_index"]
+
+    candidate_ngrams, candidate_ngram_weights = get_text_ngrams(candidate, weights_lookup_f=idf_weight, ns=ns)
+
+    # one issue is when the same ngram appears in a long affiliation string
+    # many times, it ends up being overweighted
+    # hack mitigation: we keep each ngram only once, but the weight
+    # is its max weight
+    candidate_ngrams_unique = set()
+    ngram_largest_weight = {}
+    for ngram, weight in zip(candidate_ngrams, candidate_ngram_weights):
+        if ngram not in candidate_ngrams_unique:
+            candidate_ngrams_unique.add(ngram)
+            ngram_largest_weight[ngram] = np.maximum(weight, ngram_largest_weight.get(ngram, 0))
+
+    all_ids = []
+    all_weights = []
+    candidate_ngrams_in_inverted = []
+    weights_in_inverted = []
+    for ng in candidate_ngrams_unique:
+        ids = inverted.get(ng)
+        if ids is None or len(ids) == 0:
+            continue
+        weight = float(ngram_largest_weight[ng])
+        all_ids.append(ids)
+        all_weights.append(np.full(len(ids), weight, dtype=np.float64))
+        weights_in_inverted.append(weight)
+        candidate_ngrams_in_inverted.append(ng)
+
+    if not all_ids:
+        return np.array([], dtype=np.int32), np.array([], dtype=np.float64)
+
+    all_ids = np.concatenate(all_ids)
+    all_weights = np.concatenate(all_weights)
+    intersections = np.zeros(len(lengths), dtype=np.float64)
+    np.add.at(intersections, all_ids, all_weights)
+
+    if idf_weight is not None:
+        num_candidate_ngrams = np.sum(candidate_ngram_weights)
+        num_relevant_candidate_ngrams = np.sum(weights_in_inverted)
+    else:
+        num_candidate_ngrams = len(candidate_ngrams)
+        num_relevant_candidate_ngrams = len(candidate_ngrams_in_inverted)
+
+    if max_intersection_denominator:
+        denom = num_relevant_candidate_ngrams + lengths - intersections
+    else:
+        denom = num_candidate_ngrams + lengths - intersections
+
+    scores = intersections / denom
+    ordered_ids = _ordered_unique_ids(all_ids)
+    ordered_scores = scores[ordered_ids]
+
+    if sort:
+        order = np.argsort(ordered_scores)[::-1]
+        ordered_ids = ordered_ids[order]
+        ordered_scores = ordered_scores[order]
+
+    return ordered_ids, ordered_scores
+
+
+
+
 def jaccard_word_nns(
     candidate,
     word_index,
@@ -864,6 +1165,147 @@ def jaccard_word_nns(
         jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
 
     return jaccards
+
+
+def _ordered_unique_ids(all_ids):
+    unique_ids, first_indices = np.unique(all_ids, return_index=True)
+    order = np.argsort(first_indices)
+    return unique_ids[order]
+
+
+def jaccard_word_nns_int(
+    candidate,
+    word_index,
+    id_to_key,
+    idf_weight=None,
+    max_intersection_denominator=MAX_INTERSECTION_DENOMINATOR,
+    word_multiplier=WORD_MULTIPLIER,
+    sort=False,
+):
+    if word_multiplier == "log":
+        word_multiplier = 1
+
+    lengths = word_index["lengths_index"]
+    inverted = word_index["inverted_index"]
+
+    candidate_unigrams = set(candidate.split())
+
+    use_prob_weights = idf_weight is not None
+
+    if use_prob_weights:
+        unigram_inv_probs = {i: idf_weight(i) for i in candidate_unigrams}
+
+    all_ids = []
+    all_weights = []
+    all_matched_unigrams = set()
+    for unigram in candidate_unigrams:
+        ids = inverted.get(unigram)
+        if ids is None or len(ids) == 0:
+            continue
+        all_matched_unigrams.add(unigram)
+        all_ids.append(ids)
+        if use_prob_weights:
+            weight = float(unigram_inv_probs[unigram])
+            all_weights.append(np.full(len(ids), weight, dtype=np.float64))
+
+    if not all_ids:
+        return []
+
+    all_ids = np.concatenate(all_ids)
+
+    if use_prob_weights:
+        all_weights = np.concatenate(all_weights) if all_weights else np.array([], dtype=np.float64)
+        intersections = np.zeros(len(lengths), dtype=np.float64)
+        np.add.at(intersections, all_ids, all_weights)
+        num_candidate_unigrams = np.sum(list(unigram_inv_probs.values()))
+        num_relevant_candidate_unigrams = np.sum([unigram_inv_probs[i] for i in all_matched_unigrams])
+    else:
+        intersections = np.bincount(all_ids, minlength=len(lengths)).astype(np.float64)
+        num_candidate_unigrams = len(candidate_unigrams)
+        num_relevant_candidate_unigrams = len(all_matched_unigrams)
+
+    if max_intersection_denominator:
+        denom = num_relevant_candidate_unigrams + lengths - intersections
+    else:
+        denom = num_candidate_unigrams + lengths - intersections
+
+    scores = word_multiplier * intersections / denom
+
+    ordered_ids = _ordered_unique_ids(all_ids)
+    jaccards = [(id_to_key[i], scores[i]) for i in ordered_ids]
+
+    if sort:
+        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
+
+    return jaccards
+
+
+def jaccard_word_nns_int_arrays(
+    candidate,
+    word_index,
+    idf_weight=None,
+    max_intersection_denominator=MAX_INTERSECTION_DENOMINATOR,
+    word_multiplier=WORD_MULTIPLIER,
+    sort=False,
+):
+    if word_multiplier == "log":
+        word_multiplier = 1
+
+    lengths = word_index["lengths_index"]
+    inverted = word_index["inverted_index"]
+
+    candidate_unigrams = sorted(set(candidate.split()))
+
+    use_prob_weights = idf_weight is not None
+
+    if use_prob_weights:
+        unigram_inv_probs = {i: idf_weight(i) for i in candidate_unigrams}
+
+    all_ids = []
+    all_weights = []
+    all_matched_unigrams = set()
+    for unigram in candidate_unigrams:
+        ids = inverted.get(unigram)
+        if ids is None or len(ids) == 0:
+            continue
+        all_matched_unigrams.add(unigram)
+        all_ids.append(ids)
+        if use_prob_weights:
+            weight = float(unigram_inv_probs[unigram])
+            all_weights.append(np.full(len(ids), weight, dtype=np.float64))
+
+    if not all_ids:
+        return np.array([], dtype=np.int32), np.array([], dtype=np.float64)
+
+    all_ids = np.concatenate(all_ids)
+
+    if use_prob_weights:
+        all_weights = np.concatenate(all_weights) if all_weights else np.array([], dtype=np.float64)
+        intersections = np.zeros(len(lengths), dtype=np.float64)
+        np.add.at(intersections, all_ids, all_weights)
+        num_candidate_unigrams = np.sum(list(unigram_inv_probs.values()))
+        num_relevant_candidate_unigrams = np.sum([unigram_inv_probs[i] for i in all_matched_unigrams])
+    else:
+        intersections = np.bincount(all_ids, minlength=len(lengths)).astype(np.float64)
+        num_candidate_unigrams = len(candidate_unigrams)
+        num_relevant_candidate_unigrams = len(all_matched_unigrams)
+
+    if max_intersection_denominator:
+        denom = num_relevant_candidate_unigrams + lengths - intersections
+    else:
+        denom = num_candidate_unigrams + lengths - intersections
+
+    scores = word_multiplier * intersections / denom
+
+    ordered_ids = _ordered_unique_ids(all_ids)
+    ordered_scores = scores[ordered_ids]
+
+    if sort:
+        order = np.argsort(ordered_scores)[::-1]
+        ordered_ids = ordered_ids[order]
+        ordered_scores = ordered_scores[order]
+
+    return ordered_ids, ordered_scores
 
 
 def get_text_ngrams(text, weights_lookup_f=None, ns={3, 4, 5}):

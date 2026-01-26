@@ -94,6 +94,59 @@ def split(delimiters, string, maxsplit=0):
     return re.split(regexPattern, string, maxsplit)
 
 
+def build_query_ngrams(q, max_ngram_len=7):
+    q_split = q.split()
+    n_grams = []
+    longest_ngram = np.minimum(max_ngram_len, len(q_split))
+    for i in range(int(longest_ngram), 0, -1):
+        n_grams += [" ".join(ngram).replace("|", "\|") for ngram in ngrams(q_split, i)]
+    return n_grams
+
+
+def build_query_context(query, max_q_len=256, use_word_boundaries=False, max_ngram_len=7):
+    q = str(query)[:max_q_len]
+    if len(q) == 0:
+        return {"q": "", "q_split_set": set(), "q_set_len": 1, "regex": None, "use_word_boundaries": use_word_boundaries}
+    q_split_set = set(q.split()) - STOPWORDS
+    q_set_len = len(" ".join(q_split_set))
+    q_set_len = np.maximum(q_set_len, 1)
+
+    n_grams = build_query_ngrams(q, max_ngram_len=max_ngram_len)
+    if len(n_grams) == 0:
+        regex = None
+    else:
+        if use_word_boundaries:
+            pattern = "|".join(["\\b" + i + "\\b" for i in n_grams])
+        else:
+            pattern = "|".join(n_grams)
+        regex = re.compile(pattern)
+
+    return {
+        "q": q,
+        "q_split_set": q_split_set,
+        "q_set_len": q_set_len,
+        "regex": regex,
+        "use_word_boundaries": use_word_boundaries,
+    }
+
+
+def find_query_ngrams_in_text_precompiled(t, regex, len_filter=1, remove_stopwords=True):
+    if regex is None or len(t) == 0:
+        return [], []
+    if type(t) is not str:
+        return [], []
+
+    matches = list(regex.finditer(t))
+    match_spans = [i.span() for i in matches if i.span()[1] - i.span()[0] > len_filter]
+    match_text_tokenized = [i.group() for i in matches if i.span()[1] - i.span()[0] > len_filter]
+
+    if remove_stopwords:
+        match_spans = [span for i, span in enumerate(match_spans) if match_text_tokenized[i] not in STOPWORDS]
+        match_text_tokenized = [text for text in match_text_tokenized if text not in STOPWORDS]
+
+    return match_spans, match_text_tokenized
+
+
 def find_query_ngrams_in_text(q, t, len_filter=1, remove_stopwords=True, use_word_boundaries=False, max_ngram_len=7):
     """A function to find instances of ngrams of query q
     inside text t. Finds all possible ngrams and returns their
@@ -122,11 +175,7 @@ def find_query_ngrams_in_text(q, t, len_filter=1, remove_stopwords=True, use_wor
     if type(q[0]) is not str or type(t) is not str:
         return [], []
 
-    q_split = q.split()
-    n_grams = []
-    longest_ngram = np.minimum(max_ngram_len, len(q_split))
-    for i in range(int(longest_ngram), 0, -1):
-        n_grams += [" ".join(ngram).replace("|", "\|") for ngram in ngrams(q_split, i)]
+    n_grams = build_query_ngrams(q, max_ngram_len=max_ngram_len)
 
     if use_word_boundaries:
         matches = list(re.finditer("|".join(["\\b" + i + "\\b" for i in n_grams]), t))
@@ -141,6 +190,91 @@ def find_query_ngrams_in_text(q, t, len_filter=1, remove_stopwords=True, use_wor
         match_text_tokenized = [text for text in match_text_tokenized if text not in STOPWORDS]
 
     return match_spans, match_text_tokenized
+
+
+def make_lightgbm_features_with_query_context(query_context, ror_entry, lm):
+    def lm_score(s):
+        return lm.score(s, eos=False, bos=False)
+
+    log_prob_nonsense = lm_score("qwertyuiop")
+
+    q = query_context.get("q", "")
+    if len(q) == 0:
+        return [np.nan] * len(FEATURE_NAMES)
+
+    q_split_set = query_context["q_split_set"]
+    q_set_len = query_context["q_set_len"]
+    regex = query_context["regex"]
+
+    matched_across_fields = []
+    feats = [np.round(np.log1p(ror_entry["works_count"]))]  # first feature
+    names_and_acronyms_matches = set()
+    for field in ["names", "acronyms", "city", "state", "country"]:
+        match_spans = []
+        match_text = []
+
+        text_in_query = []
+        for text in ror_entry[field]:
+            # forward search (precompiled query pattern)
+            ms, mt = find_query_ngrams_in_text_precompiled(text, regex)
+            match_spans.extend(ms)
+            match_text.extend(mt)
+            matched_across_fields.extend(mt)
+            text_in_query.append(int(text in q))
+
+            # reverse search (text against query)
+            ms, mt = find_query_ngrams_in_text(text, q)
+            match_spans.extend(ms)
+            match_text.extend(mt)
+            matched_across_fields.extend(mt)
+
+        match_spans_set = []
+        match_text_set = []
+        for t, s in sorted(zip(match_text, match_spans), key=lambda s: len(s[0]))[::-1]:
+            if t not in match_text_set and ~np.any([t in i for i in match_text_set]):
+                match_spans_set.append(s)
+                match_text_set.append(t)
+
+        matched_text_unigrams = set()
+        for i in match_text_set:
+            i_split = i.split()
+            matched_text_unigrams.update(i_split)
+            if field in {"names", "acronyms"}:
+                names_and_acronyms_matches.update(i_split)
+
+        if len(match_text_set) > 0:
+            lm_probs = [lm_score(match) for match in match_text_set]
+            match_word_lens = [len(i.split()) for i in match_text_set]
+
+            matched_text_unigrams -= STOPWORDS
+            matched_text_len = len(" ".join(matched_text_unigrams))
+
+            feats.extend(
+                [
+                    matched_text_len / q_set_len,
+                    np.nanmean(lm_probs),
+                    np.nansum(np.array(lm_probs) * np.array(match_word_lens)),
+                    np.any(text_in_query),
+                ]
+            )
+        else:
+            feats.extend([0, 0, 0, 0])
+
+    if len(q_split_set) > 0:
+        matched_split_set = set()
+        for i in matched_across_fields:
+            matched_split_set.update(i.split())
+        matched_split_set -= STOPWORDS
+        matched_len = len(" ".join(matched_split_set))
+        feats.append(matched_len / q_set_len)
+        unmatched = q_split_set - matched_split_set
+        log_probs_unmatched_unquoted = [lm_score(i) for i in unmatched]
+        feats.append(np.nansum([i for i in log_probs_unmatched_unquoted if i > log_prob_nonsense]))
+        feats.extend([np.nan] * 3)
+    else:
+        feats.extend([np.nan] * 5)
+
+    return feats
 
 
 def make_feature_names_and_constraints():
@@ -225,14 +359,14 @@ def make_lightgbm_features(query, ror_entry, lm, max_q_len=256):
             ms, mt = find_query_ngrams_in_text(q, text)
             match_spans.extend(ms)
             match_text.extend(mt)
-            matched_across_fields.extend(match_text)
+            matched_across_fields.extend(mt)
             text_in_query.append(int(text in q))
 
             # reverse search
             ms, mt = find_query_ngrams_in_text(text, q)
             match_spans.extend(ms)
             match_text.extend(mt)
-            matched_across_fields.extend(match_text)
+            matched_across_fields.extend(mt)
 
         # take the set of the results while excluding sub-ngrams if longer ngrams are found
         # e.g. if we already matched 'sentiment analysis', then 'sentiment' is excluded
