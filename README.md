@@ -65,17 +65,16 @@ uv pip install -e s2aff_rust
 ## Updating the ROR Database
 The ROR json database is stored in `data`. To update it locally you have to do the following:
 
-1. `cd data`
-2. `uv run --python .venv python download_latest_ror.py`
-3. In `s2aff/constants.py` there is a variable called `ROR_VERSION`. Update it to the new ROR version as per the filename.
-4. Run `uv run --python .venv python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
+1. `uv run --python .venv python data/download_latest_ror.py --out-dir data`
+2. If you want to use the downloaded file locally before it is uploaded to S3, set `S2AFF_ROR_VERSION` to match the new filename (or update `DEFAULT_ROR_VERSION` in `s2aff/consts.py`).
+3. Run `uv run --python .venv python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
 
 
 
 [If you work at AI2]
-To update the ROR database used by default
-1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
-To update openalex:
+To update the ROR database used by default:
+1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate (uploads the latest ROR JSON to S3, which `s2aff` will pick up automatically).
+To update OpenAlex counts:
 2. Run `uv run --python .venv python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
 3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/`
 

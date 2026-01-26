@@ -61,8 +61,7 @@ def test_s2aff_batch_predict_v3(monkeypatch):
         ner,
         ror_index,
         pairwise,
-        stage1_variant="v7",
-        stage2_variant="v3",
+        pipeline="rust",
         look_for_extractable_ids=True,
     )
 
@@ -91,9 +90,8 @@ def test_s2aff_init_falls_back_without_rust(monkeypatch):
         DummyNERPredictor([{"Example": "B-MAIN"}]),
         DummyBatchRORIndex(),
         DummyBatchPairwiseModel(),
-        stage1_variant="v7",
-        stage2_variant="v3",
+        pipeline="rust",
     )
 
-    assert model.stage1_variant == "v1"
-    assert model.stage2_variant == "v1"
+    assert model.stage1_pipeline == "python"
+    assert model.stage2_pipeline == "python"

@@ -1,5 +1,7 @@
 import logging
-from s2aff.flags import get_stage1_variant, get_stage2_variant
+import os
+
+from s2aff.flags import _normalize_pipeline
 from s2aff.model import parse_ner_prediction
 from s2aff.rust_backend import rust_available
 
@@ -10,6 +12,20 @@ ch = logging.StreamHandler()
 ch.setFormatter(formatter)
 ch.setLevel(logging.INFO)
 logger.addHandler(ch)
+
+
+def _normalize_pipeline_value(value):
+    if value is None:
+        return None
+    normalized = _normalize_pipeline(value)
+    if normalized is not None:
+        return normalized
+    value = str(value).strip().lower()
+    if value in {"v1"}:
+        return "python"
+    if value in {"v3", "v7"}:
+        return "rust"
+    return None
 
 
 class S2AFF:
@@ -41,10 +57,12 @@ class S2AFF:
     :param look_for_extractable_ids: whether to look for GRID and ISNI ids in the raw affiliation string
         ff found, just returns that candidate as the only one to the subsequent step
         default = True
-    :param stage1_variant: internal selector for stage 1 retrieval.
-        default = Rust pipeline when available, otherwise Python (or S2AFF_PIPELINE/S2AFF_STAGE1_VARIANT if set)
-    :param stage2_variant: internal selector for stage 2 reranking.
-        default = Rust pipeline when available, otherwise Python (or S2AFF_PIPELINE/S2AFF_STAGE2_VARIANT if set)
+    :param pipeline: selects the "python" or "rust" pipeline for both stages.
+        default = Rust pipeline when available, otherwise Python (or S2AFF_PIPELINE if set)
+    :param stage1_pipeline: optional per-stage override for stage 1 retrieval ("python" or "rust")
+        default = pipeline (or auto); overrides pipeline when provided
+    :param stage2_pipeline: optional per-stage override for stage 2 reranking ("python" or "rust")
+        default = pipeline (or auto); overrides pipeline when provided
     """
 
     def __init__(
@@ -59,8 +77,9 @@ class S2AFF:
         no_candidates_output_text="NO_CANDIDATES_FOUND",
         number_of_top_candidates_to_return=5,
         look_for_extractable_ids=True,
-        stage1_variant=None,
-        stage2_variant=None,
+        pipeline=None,
+        stage1_pipeline=None,
+        stage2_pipeline=None,
     ):
         self.ner_predictor = ner_predictor
         self.ror_index = ror_index
@@ -72,14 +91,24 @@ class S2AFF:
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
         self.look_for_extractable_ids = look_for_extractable_ids
-        self.stage1_variant = (stage1_variant or get_stage1_variant()).lower()
-        self.stage2_variant = (stage2_variant or get_stage2_variant()).lower()
-        if (self.stage1_variant == "v7" or self.stage2_variant == "v3") and not rust_available():
+        rust_ok = rust_available()
+        env_pipeline = _normalize_pipeline_value(os.getenv("S2AFF_PIPELINE"))
+        pipeline = _normalize_pipeline_value(pipeline)
+        stage1_pipeline = _normalize_pipeline_value(stage1_pipeline)
+        stage2_pipeline = _normalize_pipeline_value(stage2_pipeline)
+        default_pipeline = pipeline or env_pipeline or ("rust" if rust_ok else "python")
+        self.stage1_pipeline = stage1_pipeline or default_pipeline
+        self.stage2_pipeline = stage2_pipeline or default_pipeline
+        if (self.stage1_pipeline == "rust" or self.stage2_pipeline == "rust") and not rust_ok:
             logger.warning(
                 "Rust backend unavailable (or disabled); falling back to Python pipeline."
             )
-            self.stage1_variant = "v1"
-            self.stage2_variant = "v1"
+            if self.stage1_pipeline == "rust":
+                self.stage1_pipeline = "python"
+            if self.stage2_pipeline == "rust":
+                self.stage2_pipeline = "python"
+        self.stage1_variant = self.stage1_pipeline
+        self.stage2_variant = self.stage2_pipeline
 
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
@@ -106,7 +135,7 @@ class S2AFF:
         print("Done")
 
         batch_rerank = None
-        if self.stage2_variant == "v3" and hasattr(self.pairwise_model, "batch_predict_v3"):
+        if self.stage2_pipeline == "rust" and hasattr(self.pairwise_model, "batch_predict_v3"):
             batch_rerank = self.pairwise_model.batch_predict_v3
         if batch_rerank is not None:
             stage1_candidates_list = [None] * len(raw_affiliations)
@@ -152,10 +181,10 @@ class S2AFF:
                         "address": address,
                         "found_early": found_early,
                     }
-                )
+            )
 
             if batch_indices:
-                if self.stage1_variant == "v7" and hasattr(
+                if self.stage1_pipeline == "rust" and hasattr(
                     self.ror_index, "get_candidates_from_main_affiliation_v7_batch"
                 ):
                     batch_candidates, batch_scores = (
@@ -169,13 +198,13 @@ class S2AFF:
                     for main, address, early_candidates in zip(
                         batch_mains, batch_addresses, batch_earlies
                     ):
-                        if self.stage1_variant == "v7" and hasattr(
+                        if self.stage1_pipeline == "rust" and hasattr(
                             self.ror_index, "get_candidates_from_main_affiliation_v7"
                         ):
                             candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v7(
                                 main, address, early_candidates
                             )
-                        elif self.stage1_variant == "v1" and hasattr(
+                        elif self.stage1_pipeline == "python" and hasattr(
                             self.ror_index, "get_candidates_from_main_affiliation_v1"
                         ):
                             candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v1(
@@ -286,13 +315,13 @@ class S2AFF:
                 found_early = False
             # we don't want to rerank if we found a GRID or ISNI id
             if not found_early:
-                if self.stage1_variant == "v7" and hasattr(
+                if self.stage1_pipeline == "rust" and hasattr(
                     self.ror_index, "get_candidates_from_main_affiliation_v7"
                 ):
                     candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v7(
                         main, address, early_candidates
                     )
-                elif self.stage1_variant == "v1" and hasattr(
+                elif self.stage1_pipeline == "python" and hasattr(
                     self.ror_index, "get_candidates_from_main_affiliation_v1"
                 ):
                     candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v1(
@@ -312,11 +341,11 @@ class S2AFF:
                     output_scores_and_thresh = (candidates, scores)
 
             else:
-                if self.stage2_variant == "v3" and hasattr(self.pairwise_model, "predict_v3"):
+                if self.stage2_pipeline == "rust" and hasattr(self.pairwise_model, "predict_v3"):
                     reranked_candidates, reranked_scores = self.pairwise_model.predict_v3(
                         raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
                     )
-                elif self.stage2_variant == "v1" and hasattr(self.pairwise_model, "predict_v1"):
+                elif self.stage2_pipeline == "python" and hasattr(self.pairwise_model, "predict_v1"):
                     reranked_candidates, reranked_scores = self.pairwise_model.predict_v1(
                         raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
                     )

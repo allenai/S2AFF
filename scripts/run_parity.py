@@ -40,6 +40,13 @@ def _normalize_pipeline_variant(value: str, stage: int) -> str:
     return normalized
 
 
+def _pipeline_for_variant(value: str) -> str:
+    normalized = str(value).strip().lower()
+    if normalized in {"rust", "rs", "fast", "v3", "v7"}:
+        return "rust"
+    return "python"
+
+
 def load_texts(limit=None, include_edge_cases=True):
     df = pd.read_csv(PATHS["gold_affiliation_annotations"])
     texts = df["original_affiliation"].astype(str).tolist()
@@ -248,13 +255,15 @@ def stage2_results(texts, stage1_outputs, pairwise_model, top_k_first_stage, var
     return outputs
 
 
-def end2end_outputs(texts, ner_predictor, ror_index, pairwise_model, stage1_variant, stage2_variant):
+def end2end_outputs(
+    texts, ner_predictor, ror_index, pairwise_model, stage1_pipeline, stage2_pipeline
+):
     model = S2AFF(
         ner_predictor,
         ror_index,
         pairwise_model,
-        stage1_variant=stage1_variant,
-        stage2_variant=stage2_variant,
+        stage1_pipeline=stage1_pipeline,
+        stage2_pipeline=stage2_pipeline,
     )
     outputs = model.predict(texts)
     normalized = []
@@ -322,6 +331,10 @@ def main():
     right_stage1 = _normalize_pipeline_variant(args.right_stage1, stage=1)
     left_stage2 = _normalize_pipeline_variant(args.left_stage2, stage=2)
     right_stage2 = _normalize_pipeline_variant(args.right_stage2, stage=2)
+    left_stage1_pipeline = _pipeline_for_variant(left_stage1)
+    right_stage1_pipeline = _pipeline_for_variant(right_stage1)
+    left_stage2_pipeline = _pipeline_for_variant(left_stage2)
+    right_stage2_pipeline = _pipeline_for_variant(right_stage2)
 
     texts = load_texts(limit=args.limit, include_edge_cases=not args.no_edge_cases)
 
@@ -349,16 +362,16 @@ def main():
             ner_predictor,
             ror_index,
             pairwise_model,
-            left_stage1,
-            left_stage2,
+            left_stage1_pipeline,
+            left_stage2_pipeline,
         )
         right = end2end_outputs(
             texts,
             ner_predictor,
             ror_index,
             pairwise_model,
-            right_stage1,
-            right_stage2,
+            right_stage1_pipeline,
+            right_stage2_pipeline,
         )
         ok = compare_end2end_outputs(
             "end2end",

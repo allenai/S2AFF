@@ -634,7 +634,7 @@ class RORIndex:
                         ranked_before_df = ranked_before_df[ranked_before_df[1] > self.score_based_early_cutoff]
                     ranked_before_dfs.append(ranked_before_df)
         if len(ranked_before_dfs) > 0:
-            x = pd.concat(ranked_before_dfs, axis=1).fillna(0).max(1)
+            x = pd.concat(ranked_before_dfs, axis=1).fillna(0).max(axis=1)
         else:
             return [], []
         ranked_before = list(zip(x.index, x))
