@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from s2aff.features import FEATURE_NAMES
+
 from s2aff.consts import CACHE_ROOT
 from s2aff.file_cache import cached_path
 
@@ -17,6 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
     s2aff_rust = None
 
 RUST_INDEX_CACHE_VERSION = 8
+FEATURE_LEN = len(FEATURE_NAMES)
 
 
 def rust_enabled() -> bool:
@@ -157,6 +160,13 @@ class RustBackend:
         split_indices: List[int] = [0]
 
         for qc, candidates, matches in zip(query_contexts, candidates_list, rust_matches):
+            if not qc.get("q"):
+                nan_row = [np.nan] * FEATURE_LEN
+                for _ in candidates:
+                    X_all.append(list(nan_row))
+                split_indices.append(len(X_all))
+                continue
+
             q_set_len = qc["q_set_len"]
             q_split_set = qc["q_split_set"]
             for candidate_id, match in zip(candidates, matches):

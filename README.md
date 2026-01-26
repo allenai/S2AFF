@@ -26,30 +26,13 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-or (conda)
 
-```bash
-git clone git@github.com:allenai/S2AFF.git
-cd S2AFF
-conda create -y --name s2aff python==3.11
-conda activate s2aff
-pip install -e .
-```
+PyTorch installs via the CUDA wheel index configured in `pyproject.toml`, so `uv pip install -e .` will pull
+GPU-enabled wheels when available and fall back to CPU-only wheels otherwise. If you need a specific CUDA build,
+install `torch` explicitly before running the editable install.
 
-This installs the default CPU version of `pytorch`. If you want to install the GPU version, you'll have to
-comment out `torch` in `requirements.in` and then install as per instructions here: https://pytorch.org/get-started/locally/
 
-If you run into cryptic errors about GCC on macOS while installing the requirements, try this instead:
-```bash
-CFLAGS='-stdlib=libc++' pip install -e .
-```
-
-**Python + core deps**
-- Python: 3.11.x (tested with 3.11.13)
-- `camel-kenlm` (kenlm bindings) and `lightgbm==4.6.0` are required. `camel-kenlm` may build from source, so make sure
-  you have a working C++ toolchain (MSVC on Windows, clang/gcc on macOS/Linux).
-
-## Optional: Rust Acceleration
+## Optional but Recommended: Rust Acceleration
 Rust is optional. If installed, it becomes the default path and S2AFF falls back to the Python pipeline when Rust is unavailable.
 
 **Build requirements**
@@ -187,15 +170,6 @@ When reranking the top 100 candidates from the first stage model, the second sta
 
 See `scripts/train_lightgbm_ranker.py` for details. The above values are computed in lines 217 to 219.
 
-### Speed and Memory
-The model can do about 2 queries per second and will take up between 4 and 5 Gb of ram when fully loaded. If you use a GPU, the NER part will be a lot faster.
-
-For 100 affiliation strings, speed breakdown is as follows:
-
-- NER (CPU, batch size = 1): 17s
-- NER (CPU, batch size = 8): 7s
-- Stage 1 Candidates: 35s
-- LightGBM Rerank top 100 (3 threads): 12s
 
 ## Getting Started
 
@@ -246,7 +220,7 @@ for i, j in zip(reranked_candidates[:5], reranked_scores[:5]):
 To run the fast unit test suite without pulling large artifacts:
 
 ```bash
-pytest -m "not slow and not requires_models"
+uv run --python .venv python -m pytest -m "not slow and not requires_models"
 ```
 
 This runs the fast unit tests that test core functionality without requiring model downloads.
@@ -255,7 +229,7 @@ This runs the fast unit tests that test core functionality without requiring mod
 Run the full suite including integration tests (requires downloaded models):
 
 ```bash
-pytest
+uv run --python .venv python -m pytest
 ```
 
 When the model files are present under `data/`, tests marked `requires_models` run automatically.
@@ -279,7 +253,7 @@ uv run --python .venv python scripts/run_parity.py --mode all --use-cuda
 Generate a coverage report:
 
 ```bash
-pytest --cov=s2aff --cov-report=term-missing
+uv run --python .venv python -m pytest --cov=s2aff --cov-report=term-missing
 ```
 
 ### Continuous Integration
