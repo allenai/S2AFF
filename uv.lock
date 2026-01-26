@@ -3704,7 +3704,7 @@ wheels = [
 
 [[package]]
 name = "s2aff"
-version = "0.195"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "awscli" },

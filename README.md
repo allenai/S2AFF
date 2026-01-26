@@ -9,35 +9,29 @@ This is a 3-stage model:
 The model has some heuristic rules for predicting "no ROR found". These are: (1) if the score of the top candidate is below 0.3 and (2) if the difference in the top score and the second top score is less than 0.2. These were found by empirical exploration. See `scripts/analyze_thresholds.ipynb` for more details.
 
 ## Installation
-To install this package, run the following (uv):
+
+### Quickstart (Python-only)
 ```
-git clone git@github.com:allenai/S2AFF.git
+git clone https://github.com/allenai/S2AFF.git
 cd S2AFF
 uv python install 3.11.13
 uv venv --python 3.11.13
 
-# macOS/Linux:
-source .venv/bin/activate
-# Windows (PowerShell):
-# .\.venv\Scripts\Activate.ps1
-# Windows (cmd):
-# .\.venv\Scripts\activate.bat
-
 uv pip install -e .
 ```
+No activation required; commands below use `uv run --python .venv`.
 
+Download the models (expected size ~3.4 GiB):
+```
+aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/
+```
 
-PyTorch installs via the CUDA wheel index configured in `pyproject.toml`, so `uv pip install -e .` will pull
-GPU-enabled wheels when available and fall back to CPU-only wheels otherwise. If you need a specific CUDA build,
-install `torch` explicitly before running the editable install.
-
-
-## Optional but Recommended: Rust Acceleration
-Rust is optional. If installed, it becomes the default path and S2AFF falls back to the Python pipeline when Rust is unavailable.
+### Optional: Rust acceleration (faster)
+Rust is optional. If installed, it becomes the default pipeline and S2AFF falls back to Python when Rust is unavailable.
 
 **Build requirements**
 - Rust toolchain (rustup)
-- `maturin`
+- `maturin` (handled automatically by `uv pip install -e s2aff_rust`)
 
 **macOS/Linux**
 ```bash
@@ -45,10 +39,8 @@ Rust is optional. If installed, it becomes the default path and S2AFF falls back
 curl https://sh.rustup.rs -sSf | sh
 source $HOME/.cargo/env
 
-# from repo root with your venv active
-python -m pip install maturin
-cd s2aff_rust
-python -m maturin develop --release
+# from repo root
+uv pip install -e s2aff_rust
 ```
 
 **Windows (PowerShell)**
@@ -57,45 +49,26 @@ python -m maturin develop --release
 # https://rustup.rs
 
 $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
-.\.venv\Scripts\python.exe -m pip install maturin
-cd s2aff_rust
-.\.venv\Scripts\python.exe -m maturin develop --release --pip-path .\.venv\Scripts\pip.exe
+uv pip install -e s2aff_rust
 ```
-If you see `rustc is not installed or not in PATH`, make sure `C:\Users\<you>\.cargo\bin` is on PATH (or open a new shell after installing rustup).
 
-**Runtime toggles**
-```bash
-# macOS/Linux
-export S2AFF_PIPELINE=python  # force Python pipeline
-export S2AFF_PIPELINE=rust    # force Rust pipeline (if installed)
-
-# Windows (PowerShell)
-$env:S2AFF_PIPELINE="python"
-$env:S2AFF_PIPELINE="rust"
-```
-Set `S2AFF_PIPELINE=rust` to force Rust usage when it is installed.
-
-**Notes**
-- First run builds a cache file under `~/.s2aff/indices/rust/ror_index_<hash>.bin`.
-- The cache key includes the ROR file stats + settings, so a new ROR version builds a new cache.
+**Notes & troubleshooting**
+- PyTorch installs via the CUDA wheel index in `pyproject.toml`, so `uv pip install -e .` will pull GPU wheels when available and fall back to CPU-only wheels otherwise.
+- If you need a specific CUDA build, install `torch` explicitly before running the editable install.
+- If you see `rustc is not installed or not in PATH`, ensure `<wherever>\.cargo\bin` is on PATH (or open a new shell after installing rustup).
+- First Rust run builds a cache under `~/.s2aff/indices/rust/ror_index_<hash>.bin`.
 - Use `S2AFF_RUST_LOG=1` for verbose Rust timing logs.
-- No environment variable is required when Rust is installed; set `S2AFF_PIPELINE=python` to force the Python pipeline.
-- `S2AFF_STAGE1_VARIANT` / `S2AFF_STAGE2_VARIANT` are deprecated.
-
-## Models Download
-
-To get the models, run this command after the package is installed (from inside the `S2AFF` directory):  
-```[Expected download size is about 3.4 GiB]```
-
-`aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
+- Runtime toggles:
+  - macOS/Linux: `export S2AFF_PIPELINE=python|rust`
+  - Windows (PowerShell): `$env:S2AFF_PIPELINE="python|rust"`
 
 ## Updating the ROR Database
 The ROR json database is stored in `data`. To update it locally you have to do the following:
 
 1. `cd data`
-2. `python download_latest_ror.py`
+2. `uv run --python .venv python download_latest_ror.py`
 3. In `s2aff/constants.py` there is a variable called `ROR_VERSION`. Update it to the new ROR version as per the filename.
-4. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
+4. Run `uv run --python .venv python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
 
 
 
@@ -103,7 +76,7 @@ The ROR json database is stored in `data`. To update it locally you have to do t
 To update the ROR database used by default
 1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
 To update openalex:
-2. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
+2. Run `uv run --python .venv python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
 3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/`
 
 
