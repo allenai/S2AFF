@@ -21,7 +21,7 @@ jobs:
           - os: ubuntu-latest
             python-version: '3.11'
             architecture: 'x64'
-          - os: windows-latest
+          - os: windows-2022
             python-version: '3.11'
             architecture: 'x64'
       fail-fast: false
