@@ -1,15 +1,15 @@
 """
 How good is the first-stage ranker? Find out by running this script!
 
-train + val + test:
-MRR: 0.9081398880736107
-Recall@25: 0.9751609935602575
-Recall@100: 0.9829806807727691 <- reranking at this point (as of now)
-Recall@250: 0.9875804967801288
-Recall@500: 0.9894204231830727
-Recall@1000: 0.9917203311867525
-Recall@10000: 0.9931002759889604
-Recall@100000: 0.9940202391904324
+Measured Jan 26, 2026 (train + val + test):
+MRR: 0.897
+Recall@25: 0.971
+Recall@100: 0.984 <- reranking at this point (as of now)
+Recall@250: 0.986
+Recall@500: 0.988
+Recall@1000: 0.990
+Recall@10000: 0.992
+Recall@100000: 0.993
 """
 
 import os

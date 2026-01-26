@@ -17,13 +17,14 @@ dependencies = [
   "scikit-learn",
   "text_unidecode",
   "simpletransformers",
+  "transformers<5",
   "awscli",
   "boto3",
   "nltk",
   "camel-kenlm==2025.9.16",
   "hyperopt",
   "lightgbm==4.6.0",
-  "torch",
+  "torch>=2.6",
   "pydantic",
   "pytest",
   "pytest-cov",
@@ -37,9 +38,9 @@ Homepage = "https://github.com/allenai/S2AFF"
 packages = {find = {where = ["."]}}
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu121" }
+torch = { index = "pytorch-cu126" }
 
 [[tool.uv.index]]
-name = "pytorch-cu121"
-url = "https://download.pytorch.org/whl/cu121"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true

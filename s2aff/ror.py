@@ -646,12 +646,13 @@ class RORIndex:
                 return int(math.floor(scaled + 0.5))
             return int(math.ceil(scaled - 0.5))
 
+        typed_key_to_int = getattr(self, "_typed_key_to_int", None)
         ranked_before = sorted(
             ranked_before,
             key=lambda pair: (
                 -_tie_key(pair[1]),
                 pair[0].split("__")[0],
-                self._typed_key_to_int.get(pair[0], 0),
+                typed_key_to_int.get(pair[0], 0) if typed_key_to_int is not None else 0,
             ),
         )
 

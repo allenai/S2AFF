@@ -33,8 +33,12 @@ def rust_enabled() -> bool:
     return True
 
 
+def _rust_module_available() -> bool:
+    return s2aff_rust is not None and hasattr(s2aff_rust, "RorIndex")
+
+
 def rust_available() -> bool:
-    return rust_enabled() and s2aff_rust is not None
+    return rust_enabled() and _rust_module_available()
 
 
 def _rust_log_enabled() -> bool:

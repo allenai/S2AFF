@@ -3,8 +3,8 @@ This repository contains code that links raw affiliation strings to ROR ids.
 
 This is a 3-stage model:
 1. Raw affiliation strings are run through a NER transformer that parses them into main institute, child institute, and address components.
-2. A retrieval index fetches top 100 candidates. This component has a MRR of about 0.91 on our gold data, with a recall@100 of 0.98.
-3. A pairwise, feature-based LightGBM model does reranking of the top 100 candidates. This component has a precision@1 of about 0.96 and a MRR of 0.97.
+2. A retrieval index fetches top 100 candidates. This component has a MRR of about 0.90 on our gold data, with a recall@100 of 0.984.
+3. A pairwise, feature-based LightGBM model does reranking of the top 100 candidates. This component has a precision@1 of about 0.97 and a MRR of 0.98.
 
 The model has some heuristic rules for predicting "no ROR found". These are: (1) if the score of the top candidate is below 0.3 and (2) if the difference in the top score and the second top score is less than 0.2. These were found by empirical exploration. See `scripts/analyze_thresholds.ipynb` for more details.
 
@@ -150,23 +150,23 @@ $env:S2AFF_USE_CUDA="1"; $env:S2AFF_PIPELINE="rust"; uv run --python .venv pytho
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
 
-- MRR: 0.908
-- Recall@25: 0.975
-- Recall@100: 0.983 <- reranking at this point
-- Recall@250: 0.988
-- Recall@500: 0.989
-- Recall@1000: 0.992
-- Recall@10000: 0.993
-- Recall@100000: 0.994
+- MRR: 0.897
+- Recall@25: 0.971
+- Recall@100: 0.984 <- reranking at this point
+- Recall@250: 0.986
+- Recall@500: 0.988
+- Recall@1000: 0.990
+- Recall@10000: 0.992
+- Recall@100000: 0.993
 
 See `scripts/evaluate_first_stage_ranker.py` for methodology.
 
 ### Second-Stage Model Performance
 When reranking the top 100 candidates from the first stage model, the second stage model achieves the following:
 
-- Train - MAP: 0.984, MRR: 0.989, Prec@1: 0.981
-- Validation - MAP: 0.979, MRR: 0.984, Prec@1: 0.976
-- Test - MAP: 0.968, MRR: 0.972, Prec@1: 0.957
+- Train - MAP: 0.946, MRR: 0.958, Prec@1: 0.931
+- Validation - MAP: 0.973, MRR: 0.981, Prec@1: 0.966
+- Test - MAP: 0.978, MRR: 0.981, Prec@1: 0.965
 
 See `scripts/train_lightgbm_ranker.py` for details. The above values are computed in lines 217 to 219.
 
