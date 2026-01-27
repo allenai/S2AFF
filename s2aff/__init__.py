@@ -107,9 +107,6 @@ class S2AFF:
                 self.stage1_pipeline = "python"
             if self.stage2_pipeline == "rust":
                 self.stage2_pipeline = "python"
-        self.stage1_variant = self.stage1_pipeline
-        self.stage2_variant = self.stage2_pipeline
-
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
 

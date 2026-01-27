@@ -89,17 +89,12 @@ def parse_ror_entry_into_single_string_lightgbm(ror_id_or_other_affiliation, ror
     return output
 
 
-def split(delimiters, string, maxsplit=0):
-    regexPattern = "|".join(map(re.escape, delimiters))
-    return re.split(regexPattern, string, maxsplit)
-
-
 def build_query_ngrams(q, max_ngram_len=7):
     q_split = q.split()
     n_grams = []
     longest_ngram = np.minimum(max_ngram_len, len(q_split))
     for i in range(int(longest_ngram), 0, -1):
-        n_grams += [" ".join(ngram).replace("|", "\|") for ngram in ngrams(q_split, i)]
+        n_grams += [" ".join(ngram).replace("|", "\\|") for ngram in ngrams(q_split, i)]
     return n_grams
 
 
