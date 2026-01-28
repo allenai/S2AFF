@@ -37,10 +37,10 @@ def test_rust_stage1_parity(ror_index):
     ]
 
     for main, address, early in samples:
-        py_candidates, py_scores = ror_index.get_candidates_from_main_affiliation_v1(
+        py_candidates, py_scores = ror_index.get_candidates_from_main_affiliation_python(
             main, address, early
         )
-        rust_candidates, rust_scores = rust_backend.get_candidates_from_main_affiliation_v7(
+        rust_candidates, rust_scores = rust_backend.get_candidates_from_main_affiliation_rust(
             [main], address, early
         )
         _assert_rank_parity(py_candidates, py_scores, rust_candidates, rust_scores)
@@ -65,14 +65,14 @@ def test_rust_stage1_batch_parity(ror_index):
     addresses = [s[1] for s in samples]
     early_candidates_list = [s[2] for s in samples]
 
-    rust_candidates_list, rust_scores_list = rust_backend.get_candidates_from_main_affiliation_v7_batch(
+    rust_candidates_list, rust_scores_list = rust_backend.get_candidates_from_main_affiliation_rust_batch(
         mains, addresses, early_candidates_list
     )
 
     for (main, address, early), rust_candidates, rust_scores in zip(
         samples, rust_candidates_list, rust_scores_list
     ):
-        py_candidates, py_scores = ror_index.get_candidates_from_main_affiliation_v1(
+        py_candidates, py_scores = ror_index.get_candidates_from_main_affiliation_python(
             main, address, early
         )
         _assert_rank_parity(py_candidates, py_scores, rust_candidates, rust_scores)

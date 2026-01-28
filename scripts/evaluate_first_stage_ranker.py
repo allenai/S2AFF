@@ -15,13 +15,13 @@ Recall@100000: 0.993
 import os
 import numpy as np
 from s2aff.data import load_gold_affiliation_annotations
-from s2aff.flags import get_stage1_variant
+from s2aff.flags import get_stage1_pipeline
 from s2aff.ror import RORIndex, index_min
 from s2aff.model import NERPredictor, parse_ner_prediction
 
 
 USE_CUDA = True
-STAGE1_VARIANT = get_stage1_variant()
+STAGE1_PIPELINE = get_stage1_pipeline()
 VERBOSE = os.getenv("S2AFF_VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
 
 # load the gold, and subset to training data
@@ -53,19 +53,21 @@ def run_stage_1_ranker(
     )
 
     parsed = [parse_ner_prediction(pred, ror_index) for pred in ner_predictions]
-    if STAGE1_VARIANT == "v7" and hasattr(ror_index, "get_candidates_from_main_affiliation_v7_batch"):
+    if STAGE1_PIPELINE == "rust" and hasattr(ror_index, "get_candidates_from_main_affiliation_rust_batch"):
         mains = [main for main, _, _, _ in parsed]
         addresses = [address for _, _, address, _ in parsed]
         early_candidates_list = [early_candidates for _, _, _, early_candidates in parsed]
-        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_v7_batch(
+        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_rust_batch(
             mains, addresses, early_candidates_list
         )
     else:
         candidates_list = []
         scores_list = []
         for main, child, address, early_candidates in parsed:
-            if STAGE1_VARIANT == "v7" and hasattr(ror_index, "get_candidates_from_main_affiliation_v7"):
-                candidates, scores = ror_index.get_candidates_from_main_affiliation_v7(main, address, early_candidates)
+            if STAGE1_PIPELINE == "rust" and hasattr(ror_index, "get_candidates_from_main_affiliation_rust"):
+                candidates, scores = ror_index.get_candidates_from_main_affiliation_rust(
+                    main, address, early_candidates
+                )
             else:
                 candidates, scores = ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
             candidates_list.append(candidates)

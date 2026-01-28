@@ -27,7 +27,7 @@ from s2aff.features import (
 from s2aff.data import load_gold_affiliation_annotations
 from s2aff.model import NERPredictor, parse_ner_prediction
 from s2aff.rust_backend import get_rust_backend, rust_available
-from s2aff.flags import get_stage1_variant
+from s2aff.flags import get_stage1_pipeline
 
 FEATURE_NAMES = list(FEATURE_NAMES)
 
@@ -40,7 +40,7 @@ city_ind = FEATURE_NAMES.index("city_frac_of_query_matched_in_text")
 stage_1_ind = FEATURE_NAMES.index("stage_1_score")
 USE_RUST = rust_available()
 REBUILD_FEATURES = os.getenv("S2AFF_REBUILD_LGBM_FEATURES", "").lower() in {"1", "true", "yes", "on"}
-STAGE1_VARIANT = get_stage1_variant()
+STAGE1_PIPELINE = get_stage1_pipeline()
 USE_CUDA = os.getenv("S2AFF_USE_CUDA", "0").lower() in {"1", "true", "yes", "y"}
 SKIP_SHAP = os.getenv("S2AFF_SKIP_SHAP", "1").lower() in {"1", "true", "yes", "on"}
 
@@ -64,20 +64,20 @@ def _build_pairwise_data_rust(
     addresses = [address for _, _, address, _ in parsed]
     early_candidates_list = [early for _, _, _, early in parsed]
 
-    if STAGE1_VARIANT == "v7" and hasattr(
-        ror_index, "get_candidates_from_main_affiliation_v7_batch"
+    if STAGE1_PIPELINE == "rust" and hasattr(
+        ror_index, "get_candidates_from_main_affiliation_rust_batch"
     ):
-        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_v7_batch(
+        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_rust_batch(
             mains, addresses, early_candidates_list
         )
     else:
         candidates_list = []
         scores_list = []
         for main, address, early_candidates in zip(mains, addresses, early_candidates_list):
-            if STAGE1_VARIANT == "v7" and hasattr(
-                ror_index, "get_candidates_from_main_affiliation_v7"
+            if STAGE1_PIPELINE == "rust" and hasattr(
+                ror_index, "get_candidates_from_main_affiliation_rust"
             ):
-                candidates, scores = ror_index.get_candidates_from_main_affiliation_v7(
+                candidates, scores = ror_index.get_candidates_from_main_affiliation_rust(
                     main, address, early_candidates
                 )
             else:

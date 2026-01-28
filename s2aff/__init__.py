@@ -14,20 +14,6 @@ ch.setLevel(logging.INFO)
 logger.addHandler(ch)
 
 
-def _normalize_pipeline_value(value):
-    if value is None:
-        return None
-    normalized = _normalize_pipeline(value)
-    if normalized is not None:
-        return normalized
-    value = str(value).strip().lower()
-    if value in {"v1"}:
-        return "python"
-    if value in {"v3", "v7"}:
-        return "rust"
-    return None
-
-
 class S2AFF:
     """
     The wrapper class that links a raw affiliation string to a ROR entry.
@@ -92,10 +78,10 @@ class S2AFF:
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
         self.look_for_extractable_ids = look_for_extractable_ids
         rust_ok = rust_available()
-        env_pipeline = _normalize_pipeline_value(os.getenv("S2AFF_PIPELINE"))
-        pipeline = _normalize_pipeline_value(pipeline)
-        stage1_pipeline = _normalize_pipeline_value(stage1_pipeline)
-        stage2_pipeline = _normalize_pipeline_value(stage2_pipeline)
+        env_pipeline = _normalize_pipeline(os.getenv("S2AFF_PIPELINE"))
+        pipeline = _normalize_pipeline(pipeline)
+        stage1_pipeline = _normalize_pipeline(stage1_pipeline)
+        stage2_pipeline = _normalize_pipeline(stage2_pipeline)
         default_pipeline = pipeline or env_pipeline or ("rust" if rust_ok else "python")
         self.stage1_pipeline = stage1_pipeline or default_pipeline
         self.stage2_pipeline = stage2_pipeline or default_pipeline
@@ -132,8 +118,10 @@ class S2AFF:
         print("Done")
 
         batch_rerank = None
-        if self.stage2_pipeline == "rust" and hasattr(self.pairwise_model, "batch_predict_v3"):
-            batch_rerank = self.pairwise_model.batch_predict_v3
+        if self.stage2_pipeline == "rust" and hasattr(
+            self.pairwise_model, "batch_predict_with_rust_backend"
+        ):
+            batch_rerank = self.pairwise_model.batch_predict_with_rust_backend
         if batch_rerank is not None:
             stage1_candidates_list = [None] * len(raw_affiliations)
             stage1_scores_list = [None] * len(raw_affiliations)
@@ -182,10 +170,10 @@ class S2AFF:
 
             if batch_indices:
                 if self.stage1_pipeline == "rust" and hasattr(
-                    self.ror_index, "get_candidates_from_main_affiliation_v7_batch"
+                    self.ror_index, "get_candidates_from_main_affiliation_rust_batch"
                 ):
                     batch_candidates, batch_scores = (
-                        self.ror_index.get_candidates_from_main_affiliation_v7_batch(
+                        self.ror_index.get_candidates_from_main_affiliation_rust_batch(
                             batch_mains, batch_addresses, batch_earlies
                         )
                     )
@@ -196,15 +184,15 @@ class S2AFF:
                         batch_mains, batch_addresses, batch_earlies
                     ):
                         if self.stage1_pipeline == "rust" and hasattr(
-                            self.ror_index, "get_candidates_from_main_affiliation_v7"
+                            self.ror_index, "get_candidates_from_main_affiliation_rust"
                         ):
-                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v7(
+                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_rust(
                                 main, address, early_candidates
                             )
                         elif self.stage1_pipeline == "python" and hasattr(
-                            self.ror_index, "get_candidates_from_main_affiliation_v1"
+                            self.ror_index, "get_candidates_from_main_affiliation_python"
                         ):
-                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v1(
+                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_python(
                                 main, address, early_candidates
                             )
                         else:
@@ -313,15 +301,15 @@ class S2AFF:
             # we don't want to rerank if we found a GRID or ISNI id
             if not found_early:
                 if self.stage1_pipeline == "rust" and hasattr(
-                    self.ror_index, "get_candidates_from_main_affiliation_v7"
+                    self.ror_index, "get_candidates_from_main_affiliation_rust"
                 ):
-                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v7(
+                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_rust(
                         main, address, early_candidates
                     )
                 elif self.stage1_pipeline == "python" and hasattr(
-                    self.ror_index, "get_candidates_from_main_affiliation_v1"
+                    self.ror_index, "get_candidates_from_main_affiliation_python"
                 ):
-                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_v1(
+                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_python(
                         main, address, early_candidates
                     )
                 else:
@@ -338,12 +326,16 @@ class S2AFF:
                     output_scores_and_thresh = (candidates, scores)
 
             else:
-                if self.stage2_pipeline == "rust" and hasattr(self.pairwise_model, "predict_v3"):
-                    reranked_candidates, reranked_scores = self.pairwise_model.predict_v3(
+                if self.stage2_pipeline == "rust" and hasattr(
+                    self.pairwise_model, "predict_with_rust_backend"
+                ):
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict_with_rust_backend(
                         raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
                     )
-                elif self.stage2_pipeline == "python" and hasattr(self.pairwise_model, "predict_v1"):
-                    reranked_candidates, reranked_scores = self.pairwise_model.predict_v1(
+                elif self.stage2_pipeline == "python" and hasattr(
+                    self.pairwise_model, "predict_python"
+                ):
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict_python(
                         raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
                     )
                 else:

@@ -31,20 +31,13 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
-def _normalize_pipeline_variant(value: str, stage: int) -> str:
+def _normalize_pipeline_arg(value: str) -> str:
     normalized = str(value).strip().lower()
     if normalized in {"python", "py", "legacy"}:
-        return "v1"
+        return "python"
     if normalized in {"rust", "rs", "fast"}:
-        return "v7" if stage == 1 else "v3"
-    return normalized
-
-
-def _pipeline_for_variant(value: str) -> str:
-    normalized = str(value).strip().lower()
-    if normalized in {"rust", "rs", "fast", "v3", "v7"}:
         return "rust"
-    return "python"
+    return normalized
 
 
 def load_texts(limit=None, include_edge_cases=True):
@@ -214,17 +207,17 @@ def compare_end2end_outputs(label, left, right, texts, max_mismatches=5, score_r
     return True
 
 
-def stage1_results(texts, ner_predictions, ror_index, variant):
+def stage1_results(texts, ner_predictions, ror_index, stage1_pipeline):
     outputs = []
     for raw_affiliation, ner_prediction in zip(texts, ner_predictions):
         main, child, address, early_candidates = parse_ner_prediction(ner_prediction, ror_index)
-        if variant == "v7" and hasattr(ror_index, "get_candidates_from_main_affiliation_v7"):
-            candidates, scores = ror_index.get_candidates_from_main_affiliation_v7(
+        if stage1_pipeline == "rust" and hasattr(ror_index, "get_candidates_from_main_affiliation_rust"):
+            candidates, scores = ror_index.get_candidates_from_main_affiliation_rust(
                 main, address, early_candidates
             )
         else:
-            if hasattr(ror_index, "get_candidates_from_main_affiliation_v1"):
-                candidates, scores = ror_index.get_candidates_from_main_affiliation_v1(
+            if hasattr(ror_index, "get_candidates_from_main_affiliation_python"):
+                candidates, scores = ror_index.get_candidates_from_main_affiliation_python(
                     main, address, early_candidates
                 )
             else:
@@ -235,20 +228,30 @@ def stage1_results(texts, ner_predictions, ror_index, variant):
     return outputs
 
 
-def stage2_results(texts, stage1_outputs, pairwise_model, top_k_first_stage, variant):
+def stage2_results(texts, stage1_outputs, pairwise_model, top_k_first_stage, stage2_pipeline):
     outputs = []
     for raw_affiliation, (candidates, scores) in zip(texts, stage1_outputs):
         if len(candidates) > 1:
             candidates_in = candidates[:top_k_first_stage]
             scores_in = scores[:top_k_first_stage]
-            if variant == "v3":
-                reranked_candidates, reranked_scores = pairwise_model.predict_v3(
-                    raw_affiliation, candidates_in, scores_in
-                )
+            if stage2_pipeline == "rust":
+                if hasattr(pairwise_model, "predict_with_rust_backend"):
+                    reranked_candidates, reranked_scores = pairwise_model.predict_with_rust_backend(
+                        raw_affiliation, candidates_in, scores_in
+                    )
+                else:
+                    reranked_candidates, reranked_scores = pairwise_model.predict(
+                        raw_affiliation, candidates_in, scores_in
+                    )
             else:
-                reranked_candidates, reranked_scores = pairwise_model.predict_v1(
-                    raw_affiliation, candidates_in, scores_in
-                )
+                if hasattr(pairwise_model, "predict_python"):
+                    reranked_candidates, reranked_scores = pairwise_model.predict_python(
+                        raw_affiliation, candidates_in, scores_in
+                    )
+                else:
+                    reranked_candidates, reranked_scores = pairwise_model.predict(
+                        raw_affiliation, candidates_in, scores_in
+                    )
             outputs.append((list(reranked_candidates), [float(s) for s in reranked_scores]))
         else:
             outputs.append((list(candidates), [float(s) for s in scores]))
@@ -327,14 +330,10 @@ def main():
         help="Top-k candidates to rerank during stage2 parity.",
     )
     args = parser.parse_args()
-    left_stage1 = _normalize_pipeline_variant(args.left_stage1, stage=1)
-    right_stage1 = _normalize_pipeline_variant(args.right_stage1, stage=1)
-    left_stage2 = _normalize_pipeline_variant(args.left_stage2, stage=2)
-    right_stage2 = _normalize_pipeline_variant(args.right_stage2, stage=2)
-    left_stage1_pipeline = _pipeline_for_variant(left_stage1)
-    right_stage1_pipeline = _pipeline_for_variant(right_stage1)
-    left_stage2_pipeline = _pipeline_for_variant(left_stage2)
-    right_stage2_pipeline = _pipeline_for_variant(right_stage2)
+    left_stage1_pipeline = _normalize_pipeline_arg(args.left_stage1)
+    right_stage1_pipeline = _normalize_pipeline_arg(args.right_stage1)
+    left_stage2_pipeline = _normalize_pipeline_arg(args.left_stage2)
+    right_stage2_pipeline = _normalize_pipeline_arg(args.right_stage2)
 
     texts = load_texts(limit=args.limit, include_edge_cases=not args.no_edge_cases)
 
@@ -346,14 +345,26 @@ def main():
 
     ok = True
     if args.mode in {"stage1", "all"}:
-        left = stage1_results(texts, ner_predictions, ror_index, left_stage1)
-        right = stage1_results(texts, ner_predictions, ror_index, right_stage1)
+        left = stage1_results(texts, ner_predictions, ror_index, left_stage1_pipeline)
+        right = stage1_results(texts, ner_predictions, ror_index, right_stage1_pipeline)
         ok = compare_stage_outputs("stage1", left, right, texts) and ok
 
     if args.mode in {"stage2", "all"}:
-        stage1_left = stage1_results(texts, ner_predictions, ror_index, left_stage1)
-        left = stage2_results(texts, stage1_left, pairwise_model, args.top_k_first_stage, left_stage2)
-        right = stage2_results(texts, stage1_left, pairwise_model, args.top_k_first_stage, right_stage2)
+        stage1_left = stage1_results(texts, ner_predictions, ror_index, left_stage1_pipeline)
+        left = stage2_results(
+            texts,
+            stage1_left,
+            pairwise_model,
+            args.top_k_first_stage,
+            left_stage2_pipeline,
+        )
+        right = stage2_results(
+            texts,
+            stage1_left,
+            pairwise_model,
+            args.top_k_first_stage,
+            right_stage2_pipeline,
+        )
         ok = compare_stage_outputs("stage2", left, right, texts) and ok
 
     if args.mode in {"end2end", "all"}:

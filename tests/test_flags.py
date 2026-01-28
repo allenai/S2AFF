@@ -16,37 +16,37 @@ def test_normalize_pipeline_variants():
     assert flags._normalize_pipeline("unknown") is None
 
 
-def test_get_stage1_variant_pipeline_python(monkeypatch):
+def test_get_stage1_pipeline_python(monkeypatch):
     monkeypatch.setenv("S2AFF_PIPELINE", "python")
     monkeypatch.setattr(flags, "_rust_available", lambda: True)
 
-    assert flags.get_stage1_variant() == "v1"
+    assert flags.get_stage1_pipeline() == "python"
 
 
-def test_get_stage1_variant_pipeline_rust_unavailable_warns(monkeypatch):
+def test_get_stage1_pipeline_rust_unavailable_warns(monkeypatch):
     monkeypatch.setenv("S2AFF_PIPELINE", "rust")
     monkeypatch.setattr(flags, "_rust_available", lambda: False)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        assert flags.get_stage1_variant() == "v1"
+        assert flags.get_stage1_pipeline() == "python"
 
     assert any("S2AFF_PIPELINE=rust requested" in str(w.message) for w in captured)
 
 
-def test_get_stage2_variant_pipeline_python(monkeypatch):
+def test_get_stage2_pipeline_python(monkeypatch):
     monkeypatch.setenv("S2AFF_PIPELINE", "python")
     monkeypatch.setattr(flags, "_rust_available", lambda: True)
 
-    assert flags.get_stage2_variant() == "v1"
+    assert flags.get_stage2_pipeline() == "python"
 
 
-def test_get_stage2_variant_pipeline_rust_unavailable_warns(monkeypatch):
+def test_get_stage2_pipeline_rust_unavailable_warns(monkeypatch):
     monkeypatch.setenv("S2AFF_PIPELINE", "rust")
     monkeypatch.setattr(flags, "_rust_available", lambda: False)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        assert flags.get_stage2_variant() == "v1"
+        assert flags.get_stage2_pipeline() == "python"
 
     assert any("S2AFF_PIPELINE=rust requested" in str(w.message) for w in captured)

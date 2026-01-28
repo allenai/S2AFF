@@ -29,7 +29,7 @@ class DummyBatchRORIndex:
     def extract_isni_and_map_to_ror(self, _):
         return None
 
-    def get_candidates_from_main_affiliation_v7_batch(
+    def get_candidates_from_main_affiliation_rust_batch(
         self, mains, addresses, early_candidates_list
     ):
         # first non-early item has candidates, second has none
@@ -40,14 +40,14 @@ class DummyBatchPairwiseModel:
     def __init__(self):
         self.calls = []
 
-    def batch_predict_v3(self, affiliations, candidates_list, scores_list):
+    def batch_predict_with_rust_backend(self, affiliations, candidates_list, scores_list):
         self.calls.append(
             (list(affiliations), [list(c) for c in candidates_list], [list(s) for s in scores_list])
         )
         return [["ror_b", "ror_a"]], [[0.9, 0.2]]
 
 
-def test_s2aff_batch_predict_v3(monkeypatch):
+def test_s2aff_batch_predict_rust_backend(monkeypatch):
     monkeypatch.setattr(
         s2aff, "parse_ner_prediction", lambda *_: (["Main"], ["Child"], ["Address"], ["early"])
     )

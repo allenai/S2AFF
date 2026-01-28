@@ -670,24 +670,24 @@ class RORIndex:
         self._rust_backend = get_rust_backend(self)
         return self._rust_backend
 
-    def get_candidates_from_main_affiliation_v1(self, main, address="", early_candidates=[]):
+    def get_candidates_from_main_affiliation_python(self, main, address="", early_candidates=[]):
         return self.get_candidates_from_main_affiliation(main, address, early_candidates)
 
-    def get_candidates_from_main_affiliation_v7(self, main, address="", early_candidates=[]):
+    def get_candidates_from_main_affiliation_rust(self, main, address="", early_candidates=[]):
         rust_backend = self._get_rust_backend()
         if rust_backend is not None:
             address_arg = address
             if isinstance(address_arg, list):
                 address_arg = " ".join(address_arg)
-            return rust_backend.get_candidates_from_main_affiliation_v7(
+            return rust_backend.get_candidates_from_main_affiliation_rust(
                 main, address_arg, early_candidates
             )
         address_arg = address
         if isinstance(address_arg, list):
             address_arg = " ".join(address_arg)
-        return self.get_candidates_from_main_affiliation_v1(main, address_arg, early_candidates)
+        return self.get_candidates_from_main_affiliation_python(main, address_arg, early_candidates)
 
-    def get_candidates_from_main_affiliation_v7_batch(
+    def get_candidates_from_main_affiliation_rust_batch(
         self, mains, addresses=None, early_candidates_list=None
     ):
         rust_backend = self._get_rust_backend()
@@ -706,13 +706,13 @@ class RORIndex:
                 address_arg = address
                 if isinstance(address_arg, list):
                     address_arg = " ".join(address_arg)
-                candidates, scores = self.get_candidates_from_main_affiliation_v1(
+                candidates, scores = self.get_candidates_from_main_affiliation_python(
                     main, address_arg, early
                 )
                 candidates_list.append(list(candidates))
                 scores_list.append(list(scores))
             return candidates_list, scores_list
-        return rust_backend.get_candidates_from_main_affiliation_v7_batch(
+        return rust_backend.get_candidates_from_main_affiliation_rust_batch(
             mains, addresses, early_candidates_list
         )
 
@@ -836,6 +836,31 @@ def parse_ror_entry_into_single_string(
     return output
 
 
+def _jaccard_scores(
+    intersections,
+    lengths,
+    num_candidate,
+    num_relevant,
+    max_intersection_denominator,
+    sort,
+    multiplier=1.0,
+):
+    if max_intersection_denominator:
+        denom_base = num_relevant
+    else:
+        denom_base = num_candidate
+
+    jaccards = [
+        (key, multiplier * intersection / (denom_base + lengths[key] - intersection))
+        for key, intersection in intersections.items()
+    ]
+
+    if sort:
+        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
+
+    return jaccards
+
+
 def jaccard_ngram_nns(
     candidate,
     ngram_index,
@@ -880,21 +905,14 @@ def jaccard_ngram_nns(
         num_candidate_ngrams = len(candidate_ngrams)
         num_relevant_candidate_ngrams = len(candidate_ngrams_in_inverted)
 
-    if max_intersection_denominator:
-        jaccards = [
-            (grid, intersection / (num_relevant_candidate_ngrams + lengths[grid] - intersection))
-            for grid, intersection in intersections.items()
-        ]
-    else:
-        jaccards = [
-            (grid, intersection / (num_candidate_ngrams + lengths[grid] - intersection))
-            for grid, intersection in intersections.items()
-        ]
-
-    if sort:
-        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
-
-    return jaccards
+    return _jaccard_scores(
+        intersections,
+        lengths,
+        num_candidate_ngrams,
+        num_relevant_candidate_ngrams,
+        max_intersection_denominator,
+        sort,
+    )
 
 
 def jaccard_word_nns(
@@ -937,24 +955,15 @@ def jaccard_word_nns(
         num_candidate_unigrams = len(candidate_unigrams)
         num_relevant_candidate_unigrams = len(all_matched_unigrams)
 
-    if max_intersection_denominator:
-        jaccards = [
-            (
-                ror_id,
-                word_multiplier * intersection / (num_relevant_candidate_unigrams + lengths[ror_id] - intersection),
-            )
-            for ror_id, intersection in intersections.items()
-        ]
-    else:
-        jaccards = [
-            (ror_id, word_multiplier * intersection / (num_candidate_unigrams + lengths[ror_id] - intersection))
-            for ror_id, intersection in intersections.items()
-        ]
-
-    if sort:
-        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
-
-    return jaccards
+    return _jaccard_scores(
+        intersections,
+        lengths,
+        num_candidate_unigrams,
+        num_relevant_candidate_unigrams,
+        max_intersection_denominator,
+        sort,
+        multiplier=word_multiplier,
+    )
 
 
 def get_text_ngrams(text, weights_lookup_f=None, ns={3, 4, 5}):

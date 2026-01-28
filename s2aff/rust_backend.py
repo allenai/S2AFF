@@ -90,7 +90,7 @@ class RustBackend:
     def match_query_context_batch(self, queries: List[str], candidates_list: List[List[str]]):
         return self._inner.match_query_context_batch(queries, candidates_list)
 
-    def get_candidates_from_main_affiliation_v7(
+    def get_candidates_from_main_affiliation_rust(
         self, main: Any, address: str = "", early_candidates: Optional[List[str]] = None
     ) -> Tuple[List[str], List[float]]:
         if early_candidates is None:
@@ -100,7 +100,7 @@ class RustBackend:
         address_arg = address if address else None
         return self._inner.get_candidates_v7(main, address_arg, early_candidates)
 
-    def get_candidates_from_main_affiliation_v7_batch(
+    def get_candidates_from_main_affiliation_rust_batch(
         self,
         mains: List[Any],
         addresses: Optional[List[Any]] = None,

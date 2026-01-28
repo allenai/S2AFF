@@ -23,7 +23,7 @@ No activation required; commands below use `uv run --python .venv`.
 
 Download the models (expected size ~3.4 GiB):
 ```
-aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/
+AWS_REGION=us-west-2 aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/
 ```
 
 ### Optional: Rust acceleration (faster)
@@ -88,6 +88,11 @@ There are two options; use **one** of them:
 2. **Manual upload:**
    - `uv run --python .venv python update_ror.py`
    - This pulls the latest ROR ZIP from Zenodo, extracts the JSON, and uploads to S3.
+
+Note: new S2AFF deployments pick up the S3 default automatically, but the Timo s2aff endpoint does not.
+To update Timo, publish a new S2AFF release on PyPI that points to the new ROR version, then update
+the Timo config at https://github.com/allenai/timo/blob/c31be89c6da008bb81588ac2c31c28fe842e09b1/timo_services/configs/s2aff_v2.py#L13
+and redeploy. Timo is effectively in maintenance mode; consider a standalone API if you need a long-lived endpoint.
 
 ### OpenAlex works counts (optional)
 If you update ROR and want fresh `works_count` values:

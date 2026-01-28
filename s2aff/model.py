@@ -359,6 +359,7 @@ class PairwiseRORLightGBMReranker:
 
     def _score_features(self, X):
         scores = self.model.predict(X, num_threads=self.num_threads)
+
         # penalty when no match across fields
         has_no_match = X[:, self.inds_to_check].sum(1) == 0
         scores -= 0.05 * has_no_match  # magic number!
@@ -411,6 +412,7 @@ class PairwiseRORLightGBMReranker:
             X.append(x)
         X = np.array(X)
         scores = self.model.predict(X, num_threads=self.num_threads)
+
         # penalty when no match across fields
         has_no_match = X[:, self.inds_to_check].sum(1) == 0
         scores -= 0.05 * has_no_match  # magic number!
@@ -419,22 +421,25 @@ class PairwiseRORLightGBMReranker:
         reranked = np.vstack([np.array(candidates), scores]).T[scores_argsort]
         return reranked[:, 0], reranked[:, 1].astype(float)
 
-    def predict_v1(self, raw_affiliation, candidates, scores):
+    def predict_python(self, raw_affiliation, candidates, scores):
         return self.predict(raw_affiliation, candidates, scores)
 
-    def predict_v3(self, raw_affiliation, candidates, scores):
+    def predict_with_rust_backend(self, raw_affiliation, candidates, scores):
         rust_backend = self._get_rust_backend()
         if rust_backend is not None:
-            reranked_candidates_list, reranked_scores_list = self.batch_predict_v3(
+            reranked_candidates_list, reranked_scores_list = self.batch_predict_with_rust_backend(
                 [raw_affiliation], [candidates], [scores]
             )
             if not reranked_candidates_list:
                 return np.array([]), np.array([])
             return np.array(reranked_candidates_list[0]), np.array(reranked_scores_list[0])
-        return self.predict_v1(raw_affiliation, candidates, scores)
+        return self.predict_python(raw_affiliation, candidates, scores)
 
+    def batch_predict_with_rust_backend(self, raw_affiliations, candidates_list, scores_list):
+        """Batch rerank with Rust feature extraction when available.
 
-    def batch_predict_v3(self, raw_affiliations, candidates_list, scores_list):
+        Uses the Rust backend to build LightGBM features in one batch for speed.
+        """
         rust_backend = self._get_rust_backend()
         if rust_backend is None:
             reranked_candidates_list = []
@@ -442,7 +447,7 @@ class PairwiseRORLightGBMReranker:
             for raw_affiliation, candidates, scores in zip(
                 raw_affiliations, candidates_list, scores_list
             ):
-                reranked_candidates, reranked_scores = self.predict_v1(
+                reranked_candidates, reranked_scores = self.predict_python(
                     raw_affiliation, candidates, scores
                 )
                 reranked_candidates_list.append(list(reranked_candidates))

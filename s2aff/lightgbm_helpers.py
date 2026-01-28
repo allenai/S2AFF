@@ -266,6 +266,7 @@ class lightgbmExperiment(Experiment):
             params["num_class"] = len(np.unique(dtrain.get_label()))
 
         evals_result = {}
+        # LightGBM versions differ on whether `evals_result` is a supported kwarg; fall back to callbacks if needed.
         try:
             bst = lgb.train(
                 params,

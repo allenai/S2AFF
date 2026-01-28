@@ -27,11 +27,11 @@ def _rust_available() -> bool:
         return False
 
 
-def get_stage1_variant(default=None):
+def get_stage1_pipeline(default=None):
     pipeline = _normalize_pipeline(os.getenv("S2AFF_PIPELINE"))
     rust_ok = _rust_available()
     if pipeline == "python":
-        return "v1"
+        return "python"
     if pipeline == "rust":
         if not rust_ok:
             warnings.warn(
@@ -39,20 +39,20 @@ def get_stage1_variant(default=None):
                 RuntimeWarning,
                 stacklevel=2,
             )
-            return "v1"
-        return "v7"
+            return "python"
+        return "rust"
     if default is None:
-        default = "v7" if rust_ok else "v1"
-    if default == "v7" and not rust_ok:
-        return "v1"
+        default = "rust" if rust_ok else "python"
+    if default == "rust" and not rust_ok:
+        return "python"
     return default
 
 
-def get_stage2_variant(default=None):
+def get_stage2_pipeline(default=None):
     pipeline = _normalize_pipeline(os.getenv("S2AFF_PIPELINE"))
     rust_ok = _rust_available()
     if pipeline == "python":
-        return "v1"
+        return "python"
     if pipeline == "rust":
         if not rust_ok:
             warnings.warn(
@@ -60,10 +60,10 @@ def get_stage2_variant(default=None):
                 RuntimeWarning,
                 stacklevel=2,
             )
-            return "v1"
-        return "v3"
+            return "python"
+        return "rust"
     if default is None:
-        default = "v3" if rust_ok else "v1"
-    if default == "v3" and not rust_ok:
-        return "v1"
+        default = "rust" if rust_ok else "python"
+    if default == "rust" and not rust_ok:
+        return "python"
     return default
