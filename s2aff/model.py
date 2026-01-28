@@ -10,7 +10,12 @@ import numpy as np
 import lightgbm as lgb
 import kenlm
 from s2aff.text import fix_text
-from s2aff.features import make_lightgbm_features, parse_ror_entry_into_single_string_lightgbm, FEATURE_NAMES
+from s2aff.features import (
+    FEATURE_NAMES,
+    build_query_context,
+    make_lightgbm_features,
+    parse_ror_entry_into_single_string_lightgbm,
+)
 from simpletransformers.ner import NERModel, NERArgs
 from blingfire import text_to_words
 from s2aff.consts import PATHS
@@ -321,6 +326,45 @@ class PairwiseRORLightGBMReranker:
         ]
         self.city_ind = FEATURE_NAMES.index("city_frac_of_query_matched_in_text")
         self.num_threads = num_threads
+        self._cached_ror_entries = None
+        self._build_cached_ror_entries()
+        self._rust_backend = None
+
+    def _build_cached_ror_entries(self):
+        if self.ror_index is None:
+            return
+        self._cached_ror_entries = {}
+        for ror_id in self.ror_index.ror_dict.keys():
+            self._cached_ror_entries[ror_id] = parse_ror_entry_into_single_string_lightgbm(
+                ror_id, self.ror_index
+            )
+
+    def _get_cached_ror_entry(self, ror_id_or_other_affiliation):
+        if self._cached_ror_entries is None:
+            return parse_ror_entry_into_single_string_lightgbm(ror_id_or_other_affiliation, self.ror_index)
+        cached = self._cached_ror_entries.get(ror_id_or_other_affiliation)
+        if cached is not None:
+            return cached
+        return parse_ror_entry_into_single_string_lightgbm(ror_id_or_other_affiliation, self.ror_index)
+
+    def _get_rust_backend(self):
+        if self._rust_backend is not None:
+            return self._rust_backend
+        if self.ror_index is None:
+            return None
+        from s2aff.rust_backend import get_rust_backend
+
+        self._rust_backend = get_rust_backend(self.ror_index)
+        return self._rust_backend
+
+    def _score_features(self, X):
+        scores = self.model.predict(X, num_threads=self.num_threads)
+
+        # penalty when no match across fields
+        has_no_match = X[:, self.inds_to_check].sum(1) == 0
+        scores -= 0.05 * has_no_match  # magic number!
+        scores += 0.05 * X[:, self.city_ind]
+        return scores
 
     def load_model(self, model_path=PATHS["lightgbm_model"]):
         """Load a model from disk.
@@ -368,6 +412,7 @@ class PairwiseRORLightGBMReranker:
             X.append(x)
         X = np.array(X)
         scores = self.model.predict(X, num_threads=self.num_threads)
+
         # penalty when no match across fields
         has_no_match = X[:, self.inds_to_check].sum(1) == 0
         scores -= 0.05 * has_no_match  # magic number!
@@ -375,3 +420,76 @@ class PairwiseRORLightGBMReranker:
         scores_argsort = np.argsort(scores)[::-1]
         reranked = np.vstack([np.array(candidates), scores]).T[scores_argsort]
         return reranked[:, 0], reranked[:, 1].astype(float)
+
+    def predict_python(self, raw_affiliation, candidates, scores):
+        return self.predict(raw_affiliation, candidates, scores)
+
+    def predict_with_rust_backend(self, raw_affiliation, candidates, scores):
+        rust_backend = self._get_rust_backend()
+        if rust_backend is not None:
+            reranked_candidates_list, reranked_scores_list = self.batch_predict_with_rust_backend(
+                [raw_affiliation], [candidates], [scores]
+            )
+            if not reranked_candidates_list:
+                return np.array([]), np.array([])
+            return np.array(reranked_candidates_list[0]), np.array(reranked_scores_list[0])
+        return self.predict_python(raw_affiliation, candidates, scores)
+
+    def batch_predict_with_rust_backend(self, raw_affiliations, candidates_list, scores_list):
+        """Batch rerank with Rust feature extraction when available.
+
+        Uses the Rust backend to build LightGBM features in one batch for speed.
+        """
+        rust_backend = self._get_rust_backend()
+        if rust_backend is None:
+            reranked_candidates_list = []
+            reranked_scores_list = []
+            for raw_affiliation, candidates, scores in zip(
+                raw_affiliations, candidates_list, scores_list
+            ):
+                reranked_candidates, reranked_scores = self.predict_python(
+                    raw_affiliation, candidates, scores
+                )
+                reranked_candidates_list.append(list(reranked_candidates))
+                reranked_scores_list.append([float(s) for s in reranked_scores])
+            return reranked_candidates_list, reranked_scores_list
+
+        X_all = []
+        split_indices = [0]
+        fixed_affiliations = [fix_text(i).lower().replace(",", "") for i in raw_affiliations]
+        query_contexts = [build_query_context(q) for q in fixed_affiliations]
+        X_all, split_indices = rust_backend.build_lightgbm_features_with_query_context_batch(
+            self.lm, query_contexts, candidates_list, self._get_cached_ror_entry
+        )
+        if len(X_all) == 0:
+            return [[] for _ in raw_affiliations], [[] for _ in raw_affiliations]
+
+        flat_scores = []
+        for scores in scores_list:
+            flat_scores.extend(list(scores))
+        if len(flat_scores) == len(X_all):
+            X_all[:, -3] = flat_scores
+            X_all[:, -2] = [int(s == -0.15) for s in flat_scores]
+            X_all[:, -1] = [int(s == -0.1) for s in flat_scores]
+
+        if len(X_all) == 0:
+            return [[] for _ in raw_affiliations], [[] for _ in raw_affiliations]
+
+        all_scores = self._score_features(X_all)
+
+        reranked_candidates_list = []
+        reranked_scores_list = []
+        for i in range(len(raw_affiliations)):
+            start = split_indices[i]
+            end = split_indices[i + 1]
+            if start == end:
+                reranked_candidates_list.append([])
+                reranked_scores_list.append([])
+                continue
+            scores_slice = all_scores[start:end]
+            candidates_slice = candidates_list[i][: len(scores_slice)]
+            order = np.argsort(scores_slice)[::-1]
+            reranked_candidates_list.append([candidates_slice[j] for j in order])
+            reranked_scores_list.append([float(scores_slice[j]) for j in order])
+
+        return reranked_candidates_list, reranked_scores_list

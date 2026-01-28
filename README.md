@@ -3,70 +3,106 @@ This repository contains code that links raw affiliation strings to ROR ids.
 
 This is a 3-stage model:
 1. Raw affiliation strings are run through a NER transformer that parses them into main institute, child institute, and address components.
-2. A retrieval index fetches top 100 candidates. This component has a MRR of about 0.91 on our gold data, with a recall@100 of 0.98.
-3. A pairwise, feature-based LightGBM model does reranking of the top 100 candidates. This component has a precision@1 of about 0.96 and a MRR of 0.97.
+2. A retrieval index fetches top 100 candidates. This component has a MRR of about 0.90 on our gold data, with a recall@100 of 0.984.
+3. A pairwise, feature-based LightGBM model does reranking of the top 100 candidates. This component has a precision@1 of about 0.97 and a MRR of 0.98.
 
 The model has some heuristic rules for predicting "no ROR found". These are: (1) if the score of the top candidate is below 0.3 and (2) if the difference in the top score and the second top score is less than 0.2. These were found by empirical exploration. See `scripts/analyze_thresholds.ipynb` for more details.
 
 ## Installation
-To install this package, run the following (uv):
-```
-git clone git@github.com:allenai/S2AFF.git
-cd S2AFF
-uv python install 3.9.11
-uv venv --python 3.9.11
 
-# macOS/Linux:
-source .venv/bin/activate
-# Windows (PowerShell):
-# .\.venv\Scripts\Activate.ps1
-# Windows (cmd):
-# .\.venv\Scripts\activate.bat
+### Quickstart (Python-only)
+```
+git clone https://github.com/allenai/S2AFF.git
+cd S2AFF
+uv python install 3.11.13
+uv venv --python 3.11.13
 
 uv pip install -e .
 ```
+No activation required; commands below use `uv run --python .venv`.
 
-or (conda)
-
-```bash
-git clone git@github.com:allenai/S2AFF.git
-cd S2AFF
-conda create -y --name s2aff python==3.9.11
-conda activate s2aff
-pip install -e .
+Download the models (expected size ~3.4 GiB):
+```
+AWS_REGION=us-west-2 aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/
 ```
 
-This installs the default CPU version of `pytorch`. If you want to install the GPU version, you'll have to
-comment out `torch` in `requirements.in` and then install as per instructions here: https://pytorch.org/get-started/locally/
+### Optional: Rust acceleration (faster)
+Rust is optional. If installed, it becomes the default pipeline and S2AFF falls back to Python when Rust is unavailable.
 
-If you run into cryptic errors about GCC on macOS while installing the requirements, try this instead:
+**Build requirements**
+- Rust toolchain (rustup)
+- `maturin` (handled automatically by `uv pip install -e s2aff_rust`)
+
+**macOS/Linux**
 ```bash
-CFLAGS='-stdlib=libc++' pip install -e .
+# install rust (if needed)
+curl https://sh.rustup.rs -sSf | sh
+source $HOME/.cargo/env
+
+# from repo root
+uv pip install -e s2aff_rust
 ```
 
-## Models Download
+**Windows (PowerShell)**
+```powershell
+# install rust (if needed) via rustup-init.exe or winget
+# https://rustup.rs
 
-To get the models, run this command after the package is installed (from inside the `S2AFF` directory):  
-```[Expected download size is about 3.4 GiB]```
+$env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+uv pip install -e s2aff_rust
+```
 
-`aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release data/`
+**Notes & troubleshooting**
+- PyTorch installs via the CUDA wheel index in `pyproject.toml`, so `uv pip install -e .` will pull GPU wheels when available and fall back to CPU-only wheels otherwise.
+- If you need a specific CUDA build, install `torch` explicitly before running the editable install.
+- If you see `rustc is not installed or not in PATH`, ensure `<wherever>\.cargo\bin` is on PATH (or open a new shell after installing rustup).
+- First Rust run builds a cache under `~/.s2aff/indices/rust/ror_index_<hash>.bin`.
+- Use `S2AFF_RUST_LOG=1` for verbose Rust timing logs.
+- Runtime toggles:
+  - macOS/Linux: `export S2AFF_PIPELINE=python|rust`
+  - Windows (PowerShell): `$env:S2AFF_PIPELINE="python|rust"`
 
 ## Updating the ROR Database
-The ROR json database is stored in `data`. To update it locally you have to do the following:
+S2AFF can read ROR data from **local files** or from the **public S3 release bucket**. The workflow depends on whether you want a local-only update or to publish a new default version.
 
-1. `cd data`
-2. `python download_latest_ror.py`
-3. In `s2aff/constants.py` there is a variable called `ROR_VERSION`. Update it to the new ROR version as per the filename.
-4. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
+### What S2AFF uses by default
+- On import, `s2aff/consts.py` tries to discover the latest `*-ror-data.json` in the public S3 bucket.
+- If S3 discovery fails, it falls back to `DEFAULT_ROR_VERSION`.
+- You can override this with `S2AFF_ROR_VERSION` (recommended for local testing).
+
+### Local-only update (no S3 publish)
+1. Download the latest ROR file:
+   - `uv run --python .venv python data/download_latest_ror.py --out-dir data`
+2. Point S2AFF at the new file:
+   - `S2AFF_ROR_VERSION=<new-version>` (e.g., `v2.1-2026-01-15`)
+   - or update `DEFAULT_ROR_VERSION` in `s2aff/consts.py`
+3. (Optional) Refresh OpenAlex works counts:
+   - `uv run --python .venv python scripts/update_openalex_works_counts.py`
+   - You do **not** need to do this for every ROR update.
+
+### Publish a new default version to S3 (AI2 workflow)
+There are two options; use **one** of them:
+1. **CI job (preferred at AI2):**
+   - Run http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
+   - This uploads the latest ROR JSON to S3; S2AFF will pick it up automatically.
+2. **Manual upload:**
+   - `uv run --python .venv python update_ror.py`
+   - This pulls the latest ROR ZIP from Zenodo, extracts the JSON, and uploads to S3.
+
+Note: new S2AFF deployments pick up the S3 default automatically, but the Timo s2aff endpoint does not.
+To update Timo, publish a new S2AFF release on PyPI that points to the new ROR version, then update
+the Timo config at https://github.com/allenai/timo/blob/c31be89c6da008bb81588ac2c31c28fe842e09b1/timo_services/configs/s2aff_v2.py#L13
+and redeploy. Timo is effectively in maintenance mode; consider a standalone API if you need a long-lived endpoint.
+
+### OpenAlex works counts (optional)
+If you update ROR and want fresh `works_count` values:
+1. `uv run --python .venv python scripts/update_openalex_works_counts.py`
+2. Upload `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/` (AI2 only)
 
 
 
 [If you work at AI2]
-To update the ROR database used by default
-1. Run this http://s2build.inf.ai2/buildConfiguration/SemanticScholar_SparkCluster_Timo_S2aff_RorUpdate
-To update openalex:
-2. Run `python scripts/update_openalex_works_counts.py` to get the latest works counts for each ROR id from OpenAlex. (Don't need to do this after every ROR version.)
-3. Upload the `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/`
+If you publish a new ROR version to S3, consider updating OpenAlex counts and uploading the refreshed `openalex_works_counts.csv` to `s3://ai2-s2-research-public/s2aff-release/`.
 
 
 
@@ -90,38 +126,48 @@ Data sizes:
 |test  |   644 |
 |val   |   588 |
 
+### Latency (GPU, 100 affiliations)
+Measured on this machine using:
+```
+$env:S2AFF_USE_CUDA="1"; $env:S2AFF_PIPELINE="python"; uv run --python .venv python scripts/approximate_runtime_and_memory_usage.py
+$env:S2AFF_USE_CUDA="1"; $env:S2AFF_PIPELINE="rust"; uv run --python .venv python scripts/approximate_runtime_and_memory_usage.py
+```
+
+**Python pipeline** (Measured Jan 24, 2026):
+- NER: **2.061s**
+- Stage 1 candidates: **48.745s**
+- LightGBM rerank (top 100): **25.492s**
+- Total timed stages: **~76.30s**
+
+**Rust pipeline** (Measured Jan 26, 2026; Rust cache hit):
+- NER: **1.981s**
+- Stage 1 candidates: **2.760s**
+- LightGBM rerank (top 100): **7.361s**
+- Total timed stages: **~12.10s**
+
 ### First-Stage Model Performance
 The following values are obtained when combining training, validation and test sets:
 
-- MRR: 0.908
-- Recall@25: 0.975
-- Recall@100: 0.983 <- reranking at this point
-- Recall@250: 0.988
-- Recall@500: 0.989
-- Recall@1000: 0.992
-- Recall@10000: 0.993
-- Recall@100000: 0.994
+- MRR: 0.897
+- Recall@25: 0.971
+- Recall@100: 0.984 <- reranking at this point
+- Recall@250: 0.986
+- Recall@500: 0.988
+- Recall@1000: 0.990
+- Recall@10000: 0.992
+- Recall@100000: 0.993
 
 See `scripts/evaluate_first_stage_ranker.py` for methodology.
 
 ### Second-Stage Model Performance
 When reranking the top 100 candidates from the first stage model, the second stage model achieves the following:
 
-- Train - MAP: 0.984, MRR: 0.989, Prec@1: 0.981
-- Validation - MAP: 0.979, MRR: 0.984, Prec@1: 0.976
-- Test - MAP: 0.968, MRR: 0.972, Prec@1: 0.957
+- Train - MAP: 0.946, MRR: 0.958, Prec@1: 0.931
+- Validation - MAP: 0.973, MRR: 0.981, Prec@1: 0.966
+- Test - MAP: 0.978, MRR: 0.981, Prec@1: 0.965
 
 See `scripts/train_lightgbm_ranker.py` for details. The above values are computed in lines 217 to 219.
 
-### Speed and Memory
-The model can do about 2 queries per second and will take up between 4 and 5 Gb of ram when fully loaded. If you use a GPU, the NER part will be a lot faster.
-
-For 100 affiliation strings, speed breakdown is as follows:
-
-- NER (CPU, batch size = 1): 17s
-- NER (CPU, batch size = 8): 7s
-- Stage 1 Candidates: 35s
-- LightGBM Rerank top 100 (3 threads): 12s
 
 ## Getting Started
 
@@ -172,25 +218,40 @@ for i, j in zip(reranked_candidates[:5], reranked_scores[:5]):
 To run the fast unit test suite without pulling large artifacts:
 
 ```bash
-pytest -m "not slow and not requires_models"
+uv run --python .venv python -m pytest -m "not slow and not requires_models"
 ```
 
-This runs 44 unit tests that test core functionality without requiring model downloads.
+This runs the fast unit tests that test core functionality without requiring model downloads.
 
 ### Full Test Suite
-Run the full suite including integration tests (requires downloading models first):
+Run the full suite including integration tests (requires downloaded models):
 
 ```bash
-pytest
+uv run --python .venv python -m pytest
 ```
 
-This runs all 57 tests including 13 integration tests that require the NER model, ROR index, and LightGBM model.
+When the model files are present under `data/`, tests marked `requires_models` run automatically.
+To force-run even if models are not detected, use `--run-requires-models` or set `S2AFF_RUN_REQUIRES_MODELS=1`.
+To skip them even when models are present, set `S2AFF_SKIP_REQUIRES_MODELS=1`.
+
+### Parity Harness (Requires Models)
+Run exact old-vs-new parity checks (stage1, stage2, end2end):
+
+```bash
+uv run --python .venv python scripts/run_parity.py --mode all
+```
+
+To enable CUDA for NER in parity checks:
+
+```bash
+uv run --python .venv python scripts/run_parity.py --mode all --use-cuda
+```
 
 ### Coverage
 Generate a coverage report:
 
 ```bash
-pytest --cov=s2aff --cov-report=term-missing
+uv run --python .venv python -m pytest --cov=s2aff --cov-report=term-missing
 ```
 
 ### Continuous Integration

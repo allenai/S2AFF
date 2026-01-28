@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[project]
+name = "s2aff_rust"
+version = "0.2.0"
+requires-python = ">=3.8"
+
+[tool.maturin]
+module-name = "s2aff_rust"
+

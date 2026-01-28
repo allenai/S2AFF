@@ -17,9 +17,13 @@ CACHE_ROOT = Path(os.getenv("S2AFF_CACHE", str(Path.home() / ".s2aff")))
 DEFAULT_ROR_VERSION = "v1.73-2025-10-28"
 
 
-ROR_VERSION = get_ror_version()
-if ROR_VERSION == None:
-    ROR_VERSION = DEFAULT_ROR_VERSION
+_env_ror_version = os.getenv("S2AFF_ROR_VERSION")
+if _env_ror_version:
+    ROR_VERSION = _env_ror_version.strip()
+else:
+    ROR_VERSION = get_ror_version()
+    if ROR_VERSION is None:
+        ROR_VERSION = DEFAULT_ROR_VERSION
 
 PATHS = {
     "ner_training_data": os.path.join(PROJECT_ROOT_PATH, "data", "ner_training_data.pickle"),
