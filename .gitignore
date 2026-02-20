@@ -5,6 +5,7 @@ __pycache__/
 .claude/
 data/ner_model/
 data/v*.json
+.vscode/
 
 # C extensions
 *.so

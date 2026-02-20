@@ -1,24 +1,28 @@
 """
 How good is the first-stage ranker? Find out by running this script!
 
-train + val + test:
-MRR: 0.9081398880736107
-Recall@25: 0.9751609935602575
-Recall@100: 0.9829806807727691 <- reranking at this point (as of now)
-Recall@250: 0.9875804967801288
-Recall@500: 0.9894204231830727
-Recall@1000: 0.9917203311867525
-Recall@10000: 0.9931002759889604
-Recall@100000: 0.9940202391904324
+Measured Jan 26, 2026 (train + val + test):
+MRR: 0.897
+Recall@25: 0.971
+Recall@100: 0.984 <- reranking at this point (as of now)
+Recall@250: 0.986
+Recall@500: 0.988
+Recall@1000: 0.990
+Recall@10000: 0.992
+Recall@100000: 0.993
 """
 
+import os
 import numpy as np
 from s2aff.data import load_gold_affiliation_annotations
+from s2aff.flags import get_stage1_pipeline
 from s2aff.ror import RORIndex, index_min
 from s2aff.model import NERPredictor, parse_ner_prediction
 
 
-USE_CUDA = False
+USE_CUDA = True
+STAGE1_PIPELINE = get_stage1_pipeline()
+VERBOSE = os.getenv("S2AFF_VERBOSE", "0").lower() in {"1", "true", "yes", "on"}
 
 # load the gold, and subset to training data
 df = load_gold_affiliation_annotations()
@@ -48,12 +52,32 @@ def run_stage_1_ranker(
         insert_early_candidates_ind=insert_early_candidates_ind,
     )
 
-    # eval
-    i = 0
+    parsed = [parse_ner_prediction(pred, ror_index) for pred in ner_predictions]
+    if STAGE1_PIPELINE == "rust" and hasattr(ror_index, "get_candidates_from_main_affiliation_rust_batch"):
+        mains = [main for main, _, _, _ in parsed]
+        addresses = [address for _, _, address, _ in parsed]
+        early_candidates_list = [early_candidates for _, _, _, early_candidates in parsed]
+        candidates_list, scores_list = ror_index.get_candidates_from_main_affiliation_rust_batch(
+            mains, addresses, early_candidates_list
+        )
+    else:
+        candidates_list = []
+        scores_list = []
+        for main, child, address, early_candidates in parsed:
+            if STAGE1_PIPELINE == "rust" and hasattr(ror_index, "get_candidates_from_main_affiliation_rust"):
+                candidates, scores = ror_index.get_candidates_from_main_affiliation_rust(
+                    main, address, early_candidates
+                )
+            else:
+                candidates, scores = ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
+            candidates_list.append(candidates)
+            scores_list.append(scores)
+
     results = []
-    for _, row in df.iloc[i:].iterrows():
-        main, child, address, early_candidates = parse_ner_prediction(ner_predictions[i], ror_index)
-        candidates, scores = ror_index.get_candidates_from_main_affiliation(main, address, early_candidates)
+    for i, (_, row) in enumerate(df.iterrows()):
+        main, child, address, early_candidates = parsed[i]
+        candidates = candidates_list[i]
+        scores = scores_list[i]
         gold_names = [ror_index.ror_dict[i]["name"] for i in row.labels]
         candidates_names = [ror_index.ror_dict[i]["name"] for i in candidates]
         rank_of_gold = index_min(candidates, row.labels)  # location of the gold in candidates
@@ -73,10 +97,9 @@ def run_stage_1_ranker(
         }
 
         results.append(result)
-        mrr = np.mean([result["reciprocal_rank"] for result in results])
         if verbose:
+            mrr = np.mean([result["reciprocal_rank"] for result in results])
             print(f"{i} | MRR: {mrr}")
-        i += 1
 
     # aggregated scores
     mrr = np.mean([result["reciprocal_rank"] for result in results])
@@ -95,7 +118,7 @@ def run_stage_1_ranker(
     return metrics, results, ror_index
 
 
-metrics, results, ror_index = run_stage_1_ranker(verbose=True)
+metrics, results, ror_index = run_stage_1_ranker(verbose=VERBOSE)
 
 for k, v in metrics.items():
     print(f"{k}: {v}")

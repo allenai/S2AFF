@@ -1,5 +1,9 @@
 import logging
+import os
+
+from s2aff.flags import _normalize_pipeline
 from s2aff.model import parse_ner_prediction
+from s2aff.rust_backend import rust_available
 
 logger = logging.getLogger("s2aff")
 logger.setLevel(logging.INFO)
@@ -39,6 +43,12 @@ class S2AFF:
     :param look_for_extractable_ids: whether to look for GRID and ISNI ids in the raw affiliation string
         ff found, just returns that candidate as the only one to the subsequent step
         default = True
+    :param pipeline: selects the "python" or "rust" pipeline for both stages.
+        default = Rust pipeline when available, otherwise Python (or S2AFF_PIPELINE if set)
+    :param stage1_pipeline: optional per-stage override for stage 1 retrieval ("python" or "rust")
+        default = pipeline (or auto); overrides pipeline when provided
+    :param stage2_pipeline: optional per-stage override for stage 2 reranking ("python" or "rust")
+        default = pipeline (or auto); overrides pipeline when provided
     """
 
     def __init__(
@@ -53,6 +63,9 @@ class S2AFF:
         no_candidates_output_text="NO_CANDIDATES_FOUND",
         number_of_top_candidates_to_return=5,
         look_for_extractable_ids=True,
+        pipeline=None,
+        stage1_pipeline=None,
+        stage2_pipeline=None,
     ):
         self.ner_predictor = ner_predictor
         self.ror_index = ror_index
@@ -64,7 +77,22 @@ class S2AFF:
         self.no_candidates_output_text = no_candidates_output_text
         self.number_of_top_candidates_to_return = number_of_top_candidates_to_return
         self.look_for_extractable_ids = look_for_extractable_ids
-
+        rust_ok = rust_available()
+        env_pipeline = _normalize_pipeline(os.getenv("S2AFF_PIPELINE"))
+        pipeline = _normalize_pipeline(pipeline)
+        stage1_pipeline = _normalize_pipeline(stage1_pipeline)
+        stage2_pipeline = _normalize_pipeline(stage2_pipeline)
+        default_pipeline = pipeline or env_pipeline or ("rust" if rust_ok else "python")
+        self.stage1_pipeline = stage1_pipeline or default_pipeline
+        self.stage2_pipeline = stage2_pipeline or default_pipeline
+        if (self.stage1_pipeline == "rust" or self.stage2_pipeline == "rust") and not rust_ok:
+            logger.warning(
+                "Rust backend unavailable (or disabled); falling back to Python pipeline."
+            )
+            if self.stage1_pipeline == "rust":
+                self.stage1_pipeline = "python"
+            if self.stage2_pipeline == "rust":
+                self.stage2_pipeline = "python"
     def predict(self, raw_affiliations):
         """Predict function for raw affiliation strings
 
@@ -89,6 +117,169 @@ class S2AFF:
         ner_predictions = self.ner_predictor.predict(raw_affiliations)
         print("Done")
 
+        batch_rerank = None
+        if self.stage2_pipeline == "rust" and hasattr(
+            self.pairwise_model, "batch_predict_with_rust_backend"
+        ):
+            batch_rerank = self.pairwise_model.batch_predict_with_rust_backend
+        if batch_rerank is not None:
+            stage1_candidates_list = [None] * len(raw_affiliations)
+            stage1_scores_list = [None] * len(raw_affiliations)
+            meta = []
+            batch_mains = []
+            batch_addresses = []
+            batch_earlies = []
+            batch_indices = []
+
+            for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
+                print(
+                    f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
+                    end="\r",
+                )
+                main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
+                # sometimes the affiliation strings just contain GRID, ISNI, or ROR ids directly
+                if self.look_for_extractable_ids:
+                    ror_extracted = self.ror_index.extract_ror(raw_affiliation)
+                    ror_from_grid = self.ror_index.extract_grid_and_map_to_ror(raw_affiliation)
+                    ror_from_isni = self.ror_index.extract_isni_and_map_to_ror(raw_affiliation)
+                    ror_from_extracted_id = ror_extracted or ror_from_grid or ror_from_isni
+                    found_early = ror_from_extracted_id is not None
+                    if found_early:
+                        candidates, scores = [ror_from_extracted_id], [1.0]
+                else:
+                    found_early = False
+                # we don't want to rerank if we found a GRID or ISNI id
+                if not found_early:
+                    batch_mains.append(main)
+                    batch_addresses.append(address)
+                    batch_earlies.append(early_candidates)
+                    batch_indices.append(counter)
+                else:
+                    stage1_candidates_list[counter] = list(candidates)
+                    stage1_scores_list[counter] = list(scores)
+                meta.append(
+                    {
+                        "raw_affiliation": raw_affiliation,
+                        "ner_prediction": ner_prediction,
+                        "main": main,
+                        "child": child,
+                        "address": address,
+                        "found_early": found_early,
+                    }
+            )
+
+            if batch_indices:
+                if self.stage1_pipeline == "rust" and hasattr(
+                    self.ror_index, "get_candidates_from_main_affiliation_rust_batch"
+                ):
+                    batch_candidates, batch_scores = (
+                        self.ror_index.get_candidates_from_main_affiliation_rust_batch(
+                            batch_mains, batch_addresses, batch_earlies
+                        )
+                    )
+                else:
+                    batch_candidates = []
+                    batch_scores = []
+                    for main, address, early_candidates in zip(
+                        batch_mains, batch_addresses, batch_earlies
+                    ):
+                        if self.stage1_pipeline == "rust" and hasattr(
+                            self.ror_index, "get_candidates_from_main_affiliation_rust"
+                        ):
+                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_rust(
+                                main, address, early_candidates
+                            )
+                        elif self.stage1_pipeline == "python" and hasattr(
+                            self.ror_index, "get_candidates_from_main_affiliation_python"
+                        ):
+                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation_python(
+                                main, address, early_candidates
+                            )
+                        else:
+                            candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
+                                main, address, early_candidates
+                            )
+                        batch_candidates.append(list(candidates))
+                        batch_scores.append(list(scores))
+
+                for idx, candidates, scores in zip(
+                    batch_indices, batch_candidates, batch_scores
+                ):
+                    stage1_candidates_list[idx] = list(candidates)
+                    stage1_scores_list[idx] = list(scores)
+
+            for i in range(len(stage1_candidates_list)):
+                if stage1_candidates_list[i] is None:
+                    stage1_candidates_list[i] = []
+                    stage1_scores_list[i] = []
+
+            indices_to_rerank = [
+                i
+                for i, m in enumerate(meta)
+                if (not m["found_early"] and len(stage1_candidates_list[i]) > 1)
+            ]
+
+            reranked_candidates_map = {}
+            reranked_scores_map = {}
+            if indices_to_rerank:
+                batch_affiliations = [raw_affiliations[i] for i in indices_to_rerank]
+                batch_candidates = [
+                    stage1_candidates_list[i][: self.top_k_first_stage] for i in indices_to_rerank
+                ]
+                batch_scores = [stage1_scores_list[i][: self.top_k_first_stage] for i in indices_to_rerank]
+                reranked_candidates_list, reranked_scores_list = batch_rerank(
+                    batch_affiliations, batch_candidates, batch_scores
+                )
+                for idx, orig_idx in enumerate(indices_to_rerank):
+                    reranked_candidates_map[orig_idx] = reranked_candidates_list[idx]
+                    reranked_scores_map[orig_idx] = reranked_scores_list[idx]
+
+            outputs = []
+            for i, m in enumerate(meta):
+                candidates = stage1_candidates_list[i]
+                scores = stage1_scores_list[i]
+
+                if len(candidates) == 0:
+                    output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
+                elif len(candidates) == 1:
+                    if scores[0] < self.pairwise_model_threshold:
+                        output_scores_and_thresh = ([self.no_ror_output_text], [0.0])
+                    else:
+                        output_scores_and_thresh = (candidates, scores)
+                else:
+                    reranked_candidates = reranked_candidates_map.get(i, candidates)
+                    reranked_scores = reranked_scores_map.get(i, scores)
+                    # apply threshold to reranked scores
+                    if len(reranked_candidates) == 0:
+                        output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
+                    elif reranked_scores[0] < self.pairwise_model_threshold and (
+                        len(reranked_candidates) == 1
+                        or reranked_scores[0] - reranked_scores[1] < self.pairwise_model_delta_threshold
+                    ):
+                        output_scores_and_thresh = [self.no_ror_output_text], [0.0]
+                    else:
+                        output_scores_and_thresh = (reranked_candidates, reranked_scores)
+
+                try:
+                    display_name = self.ror_index.ror_dict[output_scores_and_thresh[0][0]]["name"]
+                except:
+                    display_name = ""
+
+                output = {
+                    "raw_affiliation": m["raw_affiliation"],
+                    "ner_prediction": m["ner_prediction"],
+                    "main_from_ner": m["main"],
+                    "child_from_ner": m["child"],
+                    "address_from_ner": m["address"],
+                    "stage1_candidates": list(candidates[: self.number_of_top_candidates_to_return]),
+                    "stage1_scores": list(scores[: self.number_of_top_candidates_to_return]),
+                    "stage2_candidates": list(output_scores_and_thresh[0][: self.number_of_top_candidates_to_return]),
+                    "stage2_scores": list(output_scores_and_thresh[1][: self.number_of_top_candidates_to_return]),
+                    "top_candidate_display_name": display_name,
+                }
+                outputs.append(output)
+            return outputs
+
         outputs = []
         for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
             print(
@@ -109,9 +300,22 @@ class S2AFF:
                 found_early = False
             # we don't want to rerank if we found a GRID or ISNI id
             if not found_early:
-                candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
-                    main, address, early_candidates
-                )
+                if self.stage1_pipeline == "rust" and hasattr(
+                    self.ror_index, "get_candidates_from_main_affiliation_rust"
+                ):
+                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_rust(
+                        main, address, early_candidates
+                    )
+                elif self.stage1_pipeline == "python" and hasattr(
+                    self.ror_index, "get_candidates_from_main_affiliation_python"
+                ):
+                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation_python(
+                        main, address, early_candidates
+                    )
+                else:
+                    candidates, scores = self.ror_index.get_candidates_from_main_affiliation(
+                        main, address, early_candidates
+                    )
 
             if len(candidates) == 0:
                 output_scores_and_thresh = [self.no_candidates_output_text], [0.0]
@@ -122,9 +326,22 @@ class S2AFF:
                     output_scores_and_thresh = (candidates, scores)
 
             else:
-                reranked_candidates, reranked_scores = self.pairwise_model.predict(
-                    raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
-                )
+                if self.stage2_pipeline == "rust" and hasattr(
+                    self.pairwise_model, "predict_with_rust_backend"
+                ):
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict_with_rust_backend(
+                        raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
+                    )
+                elif self.stage2_pipeline == "python" and hasattr(
+                    self.pairwise_model, "predict_python"
+                ):
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict_python(
+                        raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
+                    )
+                else:
+                    reranked_candidates, reranked_scores = self.pairwise_model.predict(
+                        raw_affiliation, candidates[: self.top_k_first_stage], scores[: self.top_k_first_stage]
+                    )
                 # apply threshold to reranked scores
                 if len(reranked_candidates) == 0:
                     output_scores_and_thresh = [self.no_candidates_output_text], [0.0]

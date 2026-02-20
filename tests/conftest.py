@@ -7,6 +7,7 @@ during integration tests.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +28,9 @@ def pytest_collection_modifyitems(config, items):
     skip_reason = pytest.mark.skip(
         reason=(
             "requires_models tests skipped by default. "
-            "Pass --run-requires-models or set S2AFF_RUN_REQUIRES_MODELS=1 to enable."
+            "Pass --run-requires-models or set S2AFF_RUN_REQUIRES_MODELS=1 to enable. "
+            "Tests auto-enable when local model files are present unless "
+            "S2AFF_SKIP_REQUIRES_MODELS=1 is set."
         )
     )
     for item in items:
@@ -35,8 +38,60 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_reason)
 
 
+def _env_flag(name):
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _project_root():
+    return Path(__file__).resolve().parents[1]
+
+
+def _local_models_available():
+    data_dir = _project_root() / "data"
+    if not data_dir.is_dir():
+        return False
+
+    ror_data = list(data_dir.glob("*-ror-data.json"))
+    if not ror_data:
+        return False
+
+    required_files = [
+        data_dir / "openalex_works_counts.csv",
+        data_dir / "country_info.txt",
+        data_dir / "ror_edits.jsonl",
+        data_dir / "raw_affiliations_lowercased.binary",
+        data_dir / "lightgbm_model.booster",
+    ]
+    if any(not path.is_file() for path in required_files):
+        return False
+
+    ner_dir = data_dir / "ner_model"
+    if not ner_dir.is_dir():
+        return False
+
+    ner_files = [
+        ner_dir / "pytorch_model.bin",
+        ner_dir / "config.json",
+        ner_dir / "tokenizer_config.json",
+    ]
+    if any(not path.is_file() for path in ner_files):
+        return False
+
+    return True
+
+
 def _requires_models_enabled(pytestconfig):
-    return pytestconfig.getoption("--run-requires-models") or os.environ.get("S2AFF_RUN_REQUIRES_MODELS")
+    if pytestconfig.getoption("--run-requires-models"):
+        return True
+    run_flag = _env_flag("S2AFF_RUN_REQUIRES_MODELS")
+    if run_flag is not None:
+        return run_flag
+    if _env_flag("S2AFF_SKIP_REQUIRES_MODELS"):
+        return False
+    return _local_models_available()
 
 
 @pytest.fixture(scope="session")

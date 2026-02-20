@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from operator import itemgetter
@@ -49,18 +50,6 @@ def get_special_tokens_dict():
     return special_tokens_dict
 
 
-def index_min(l, j_set):
-    found_indices = []
-    l_set = set(l)
-    for j in j_set:
-        if j in l_set:
-            found_indices.append(l.index(j))
-    if len(found_indices) > 0:
-        return min(found_indices)
-    else:
-        return 100000  # approximate # of ROR elements
-
-
 def sum_list_of_list_of_tuples(dicts, use_log=False):
     ret = defaultdict(float)
     for d in dicts:
@@ -70,6 +59,8 @@ def sum_list_of_list_of_tuples(dicts, use_log=False):
             else:
                 ret[k] += v
     return dict(ret)
+
+
 
 
 def v2_display_name(rec):
@@ -202,7 +193,8 @@ class RORIndex:
         self.ror_data_path = cached_path(ror_data_path)
         self.country_info_path = cached_path(country_info_path)
         self.ror_edits_path = cached_path(ror_edits_path)
-        works_counts = pd.read_csv(works_counts_path)
+        self.works_counts_path = cached_path(works_counts_path)
+        works_counts = pd.read_csv(self.works_counts_path)
         self.works_counts = {i.ror: i.works_count for i in works_counts.itertuples()}
         self.use_prob_weights = use_prob_weights
         self.word_multiplier = word_multiplier
@@ -211,6 +203,7 @@ class RORIndex:
         self.insert_early_candidates_ind = insert_early_candidates_ind
         self.reinsert_cutoff_frac = reinsert_cutoff_frac
         self.score_based_early_cutoff = score_based_early_cutoff
+        self._rust_backend = None
 
         self.country_codes = pd.read_csv(self.country_info_path, sep="\t")
         self.country_codes_dict = {}
@@ -442,6 +435,45 @@ class RORIndex:
         self.ror_name_direct_lookup = ror_name_direct_lookup
         self.inverse_dict_fixed = inverse_dict_fixed
 
+        # integer-indexed variants for faster retrieval
+        self._typed_keys = list(inverse_dict_fixed.keys())
+        self._typed_key_to_int = {k: i for i, k in enumerate(self._typed_keys)}
+        self._int_to_typed_key = list(self._typed_keys)
+        self._ror_id_list = list(self.ror_dict.keys())
+        self._ror_id_to_int = {k: i for i, k in enumerate(self._ror_id_list)}
+        self._int_to_ror_id = list(self._ror_id_list)
+        self._typed_id_to_ror_id_int = np.fromiter(
+            (self._ror_id_to_int[k.split("__")[0]] for k in self._typed_keys),
+            dtype=np.int32,
+            count=len(self._typed_keys),
+        )
+
+        self.word_index_int = {
+            "inverted_index": {
+                token: np.array(
+                    sorted(self._typed_key_to_int[k] for k in key_set),
+                    dtype=np.int32,
+                )
+                for token, key_set in ror_words_inverted_index.items()
+            },
+            "lengths_index": np.array(
+                [ror_words_lengths_index.get(k, 0) for k in self._typed_keys], dtype=np.float64
+            ),
+        }
+        self.ngram_index_int = {
+            "inverted_index": {
+                token: np.array(
+                    sorted(self._typed_key_to_int[k] for k in key_set),
+                    dtype=np.int32,
+                )
+                for token, key_set in ror_ngrams_inverted_index.items()
+            },
+            "lengths_index": np.array(
+                [ror_ngrams_lengths_index.get(k, 0) for k in self._typed_keys], dtype=np.float64
+            ),
+        }
+
+
     def get_candidates_from_raw_affiliation(self, raw_affiliation, ner_predictor, look_for_extractable_ids=True):
         """A wrapper function that puts the raw affiliation string through the
         NER predictor, parses the predicted output, and fetches the ROR candidates.
@@ -544,11 +576,27 @@ class RORIndex:
                         ranked_before_df = ranked_before_df[ranked_before_df[1] > self.score_based_early_cutoff]
                     ranked_before_dfs.append(ranked_before_df)
         if len(ranked_before_dfs) > 0:
-            x = pd.concat(ranked_before_dfs, axis=1).fillna(0).max(1)
+            x = pd.concat(ranked_before_dfs, axis=1).fillna(0).max(axis=1)
         else:
             return [], []
         ranked_before = list(zip(x.index, x))
-        ranked_before = sorted(ranked_before, key=itemgetter(1), reverse=True)
+        tie_scale = 1e12
+
+        def _tie_key(score):
+            scaled = score * tie_scale
+            if scaled >= 0:
+                return int(math.floor(scaled + 0.5))
+            return int(math.ceil(scaled - 0.5))
+
+        typed_key_to_int = getattr(self, "_typed_key_to_int", None)
+        ranked_before = sorted(
+            ranked_before,
+            key=lambda pair: (
+                -_tie_key(pair[1]),
+                pair[0].split("__")[0],
+                typed_key_to_int.get(pair[0], 0) if typed_key_to_int is not None else 0,
+            ),
+        )
 
         # we have multiple appearances of the same grid id
         # keep only the first appearance in the ranked list
@@ -614,17 +662,60 @@ class RORIndex:
 
         return candidates, scores
 
-    def parse_ror_entry_into_single_string(
-        self, ror_id, use_separator_tokens=True, shuffle_names=False, special_tokens_dict=get_special_tokens_dict()
+    def _get_rust_backend(self):
+        if self._rust_backend is not None:
+            return self._rust_backend
+        from s2aff.rust_backend import get_rust_backend
+
+        self._rust_backend = get_rust_backend(self)
+        return self._rust_backend
+
+    def get_candidates_from_main_affiliation_python(self, main, address="", early_candidates=[]):
+        return self.get_candidates_from_main_affiliation(main, address, early_candidates)
+
+    def get_candidates_from_main_affiliation_rust(self, main, address="", early_candidates=[]):
+        rust_backend = self._get_rust_backend()
+        if rust_backend is not None:
+            address_arg = address
+            if isinstance(address_arg, list):
+                address_arg = " ".join(address_arg)
+            return rust_backend.get_candidates_from_main_affiliation_rust(
+                main, address_arg, early_candidates
+            )
+        address_arg = address
+        if isinstance(address_arg, list):
+            address_arg = " ".join(address_arg)
+        return self.get_candidates_from_main_affiliation_python(main, address_arg, early_candidates)
+
+    def get_candidates_from_main_affiliation_rust_batch(
+        self, mains, addresses=None, early_candidates_list=None
     ):
-        if ror_id not in self.ror_dict:
-            # assuming that this is just not a ror_id and instead a string of some affiliation
-            return "[NAME] " + ror_id
-        ror_entry = self.ror_dict[ror_id]
-        return parse_ror_entry_into_single_string(
-            ror_entry, self.country_codes_dict, self.country_by_iso2, special_tokens_dict, use_separator_tokens, shuffle_names, use_wiki=False
+        rust_backend = self._get_rust_backend()
+        if addresses is None:
+            addresses = [""] * len(mains)
+        if early_candidates_list is None:
+            early_candidates_list = [[] for _ in mains]
+        if len(addresses) != len(mains):
+            raise ValueError("addresses length mismatch")
+        if len(early_candidates_list) != len(mains):
+            raise ValueError("early_candidates_list length mismatch")
+        if rust_backend is None:
+            candidates_list = []
+            scores_list = []
+            for main, address, early in zip(mains, addresses, early_candidates_list):
+                address_arg = address
+                if isinstance(address_arg, list):
+                    address_arg = " ".join(address_arg)
+                candidates, scores = self.get_candidates_from_main_affiliation_python(
+                    main, address_arg, early
+                )
+                candidates_list.append(list(candidates))
+                scores_list.append(list(scores))
+            return candidates_list, scores_list
+        return rust_backend.get_candidates_from_main_affiliation_rust_batch(
+            mains, addresses, early_candidates_list
         )
-        
+
     def extract_ror(self, s):
         match = ror_extractor.search(s)
         if not match:
@@ -745,6 +836,31 @@ def parse_ror_entry_into_single_string(
     return output
 
 
+def _jaccard_scores(
+    intersections,
+    lengths,
+    num_candidate,
+    num_relevant,
+    max_intersection_denominator,
+    sort,
+    multiplier=1.0,
+):
+    if max_intersection_denominator:
+        denom_base = num_relevant
+    else:
+        denom_base = num_candidate
+
+    jaccards = [
+        (key, multiplier * intersection / (denom_base + lengths[key] - intersection))
+        for key, intersection in intersections.items()
+    ]
+
+    if sort:
+        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
+
+    return jaccards
+
+
 def jaccard_ngram_nns(
     candidate,
     ngram_index,
@@ -789,21 +905,14 @@ def jaccard_ngram_nns(
         num_candidate_ngrams = len(candidate_ngrams)
         num_relevant_candidate_ngrams = len(candidate_ngrams_in_inverted)
 
-    if max_intersection_denominator:
-        jaccards = [
-            (grid, intersection / (num_relevant_candidate_ngrams + lengths[grid] - intersection))
-            for grid, intersection in intersections.items()
-        ]
-    else:
-        jaccards = [
-            (grid, intersection / (num_candidate_ngrams + lengths[grid] - intersection))
-            for grid, intersection in intersections.items()
-        ]
-
-    if sort:
-        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
-
-    return jaccards
+    return _jaccard_scores(
+        intersections,
+        lengths,
+        num_candidate_ngrams,
+        num_relevant_candidate_ngrams,
+        max_intersection_denominator,
+        sort,
+    )
 
 
 def jaccard_word_nns(
@@ -846,24 +955,15 @@ def jaccard_word_nns(
         num_candidate_unigrams = len(candidate_unigrams)
         num_relevant_candidate_unigrams = len(all_matched_unigrams)
 
-    if max_intersection_denominator:
-        jaccards = [
-            (
-                ror_id,
-                word_multiplier * intersection / (num_relevant_candidate_unigrams + lengths[ror_id] - intersection),
-            )
-            for ror_id, intersection in intersections.items()
-        ]
-    else:
-        jaccards = [
-            (ror_id, word_multiplier * intersection / (num_candidate_unigrams + lengths[ror_id] - intersection))
-            for ror_id, intersection in intersections.items()
-        ]
-
-    if sort:
-        jaccards = sorted(jaccards, key=itemgetter(1), reverse=True)
-
-    return jaccards
+    return _jaccard_scores(
+        intersections,
+        lengths,
+        num_candidate_unigrams,
+        num_relevant_candidate_unigrams,
+        max_intersection_denominator,
+        sort,
+        multiplier=word_multiplier,
+    )
 
 
 def get_text_ngrams(text, weights_lookup_f=None, ns={3, 4, 5}):
