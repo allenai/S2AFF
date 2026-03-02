@@ -30,6 +30,7 @@ dependencies = [
   "pytest-cov",
   "pyarrow<21",
   "s2aff_rust==0.2.1",
+  "setuptools",
 ]
 
 [project.urls]
