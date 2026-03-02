@@ -22,6 +22,10 @@ def _parse_ror_version(version: str) -> Optional[Tuple[int, int, int, int, int]]
     )
 
 
+# NOTE: These functions are also duplicated in update_ror.py
+# If you modify these functions, also update update_ror.py
+
+
 def _iter_s3_objects(s3, bucket: str, prefix: str) -> Iterable[Dict[str, Any]]:
     continuation = None
     while True:
