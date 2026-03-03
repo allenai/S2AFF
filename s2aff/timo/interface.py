@@ -114,7 +114,7 @@ class Predictor:
     @staticmethod
     def convert_raw_prediction_to_Prediction(prediction) -> Prediction:
         if len(prediction["stage2_candidates"]) == 0:
-            prediction_instance = Prediction(ror_id="", score=0, main="", child="", address="")
+            prediction_instance = Prediction(ror_id="", display_name="", score=0, main=[], child=[], address=[])
         else:
             prediction_instance = Prediction(
                 ror_id=prediction["stage2_candidates"][0],

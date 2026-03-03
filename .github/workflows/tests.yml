@@ -42,19 +42,26 @@ jobs:
       - name: Create venv
         run: uv venv --python ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: uv pip install -e .
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Rust extension
         run: uv pip install -e s2aff_rust
 
+      - name: Install dependencies
+        run: uv pip install -e .
+
       - name: Run fast tests (no model downloads)
         env:
           S2AFF_PIPELINE: python
-        run: uv run --python .venv pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term --cov-report=xml -v
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            source .venv/Scripts/activate
+          else
+            source .venv/bin/activate
+          fi
+          python -m pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term --cov-report=xml -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -86,20 +93,21 @@ jobs:
       - name: Create venv
         run: uv venv --python 3.11
 
-      - name: Install dependencies
-        run: uv pip install -e .
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build Rust extension
         run: uv pip install -e s2aff_rust
 
+      - name: Install dependencies
+        run: uv pip install -e .
+
       - name: Download models from S3
         run: |
-          uv run --python .venv aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ner_model/ data/ner_model/
-          uv run --python .venv aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/pairwise_model/ data/pairwise_model/
-          uv run --python .venv aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ data/ --exclude "ner_model/*" --exclude "pairwise_model/*"
+          source .venv/bin/activate
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ner_model/ data/ner_model/
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/pairwise_model/ data/pairwise_model/
+          aws s3 sync --no-sign-request s3://ai2-s2-research-public/s2aff-release/ data/ --exclude "ner_model/*" --exclude "pairwise_model/*"
 
       - name: Verify models downloaded
         run: |
@@ -110,7 +118,9 @@ jobs:
       - name: Run all tests including integration
         env:
           S2AFF_PIPELINE: rust
-        run: uv run --python .venv pytest --cov=s2aff --cov-report=term --cov-report=xml --cov-fail-under=50 -v
+        run: |
+          source .venv/bin/activate
+          python -m pytest --cov=s2aff --cov-report=term --cov-report=xml --cov-fail-under=50 -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -139,17 +149,27 @@ jobs:
       - name: Create venv
         run: uv venv --python 3.11
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust extension
+        run: uv pip install -e s2aff_rust
+
       - name: Install dependencies
         run: uv pip install -e .
 
       - name: Run tests with coverage threshold
         env:
           S2AFF_PIPELINE: python
-        run: uv run --python .venv pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-fail-under=48 -v
+        run: |
+          source .venv/bin/activate
+          python -m pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-fail-under=48 -v
 
       - name: Generate coverage report
         if: always()
-        run: uv run --python .venv pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-report=html
+        run: |
+          source .venv/bin/activate
+          python -m pytest -m "not slow and not requires_models" --cov=s2aff --cov-report=term-missing --cov-report=html
 
       - name: Upload coverage HTML report
         if: always()

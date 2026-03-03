@@ -147,6 +147,14 @@ def parse_ner_prediction(ner_prediction, ror_index):
             main = address
             address = []
 
+    # Ensure all return values are lists (edge case: empty NER predictions)
+    if not isinstance(main, list):
+        main = [main] if main else []
+    if not isinstance(child_new, list):
+        child_new = [child_new] if child_new else []
+    if not isinstance(address, list):
+        address = [address] if address else []
+
     # join it all together
     return main, child_new, address, early_candidates
 
