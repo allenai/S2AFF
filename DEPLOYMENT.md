@@ -1,137 +1,208 @@
-# Deployment Guide (AI2 Internal)
+# S2AFF Deployment Guide
 
-This document contains deployment scripts and instructions for AI2 internal use.
+Complete guide for updating and deploying S2AFF to production (AI2 Internal).
+
+## Table of Contents
+1. [Prerequisites](#prerequisites)
+2. [Deployment Workflow](#deployment-workflow)
+3. [Post-Deployment Configuration](#post-deployment-configuration)
+
+---
 
 ## Prerequisites
 
+### Required Tools
+- Python 3.11+
+- Docker (for Linux wheel builds)
+- AWS CLI (configured with AI2 credentials)
+- Access to AI2 internal PyPI repository
+
 ### Required Environment Variables
 
-```bash
-export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-export TWINE_USERNAME="<username>"
-export TWINE_PASSWORD="<password>"
-```
+See the [deployment document](https://docs.google.com/document/d/1VoDK3e6PxAEqdvORcXKyeZdS7toiqIVZXbWJYiYdhh8/edit?usp=sharing) for required environment variables (`TWINE_REPOSITORY_URL`, `TWINE_USERNAME`, `TWINE_PASSWORD`, etc.).
 
-**Note**: Contact your team for the correct values for `TWINE_REPOSITORY_URL`, `TWINE_USERNAME`, and `TWINE_PASSWORD`.
-
-### Optional: Using .env file
-
-You can create a `.env` file in the repository root (see `.env.example`) and source it:
-
+Create a `.env` file (see `.env.example`) and source it:
 ```bash
 source .env
 ```
 
-## Deployment Scripts
+### Access Requirements
+- AI2 network/VPN connection
+- Write access to `s3://ai2-timo-registry/`
+- Write access to `s3://ai2-s2-research/`
+- TeamCity permissions
 
-### `upload.sh`
+---
 
-**Purpose**: Builds and uploads the main S2AFF Python package to AI2 PyPI.
+## S2 Pypi Deployment Workflow
 
-**Requirements**:
-- Python 3.11+
-- `TWINE_REPOSITORY_URL`, `TWINE_USERNAME`, `TWINE_PASSWORD` environment variables
+### Step 1: Decide on Version Number
 
-**What it does**:
-1. Cleans previous build artifacts (`dist/`)
-2. Upgrades build tools (pip, setuptools, wheel, build, twine)
-3. Builds the package using `python -m build`
-4. Uploads to AI2 PyPI using `twine upload`
+Current version: **0.202**
 
-**Usage**:
+Choose your new version number (e.g., `0.203`).
+
+### Step 2: Prepare Artifacts (if new model artifacts created)
+
+**Only required if you have new model files (ROR data, OpenAlex counts, trained models, etc.)**
+
 ```bash
-# Set all required env vars (or source .env)
-export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-export TWINE_USERNAME="<username>"
-export TWINE_PASSWORD="<password>"
-./upload.sh
+# Download release artifacts
+aws s3 sync s3://ai2-s2-research-public/s2aff-release/ ./artifacts/
+
+# Create tarball
+tar -czf model_artifacts.tar.gz -C artifacts/ .
+
+# Upload to internal S3
+aws s3 cp model_artifacts.tar.gz s3://ai2-s2-research/s2aff/model_artifacts.tar.gz
 ```
 
-### `s2aff_rust/upload-linux.sh`
+**If the S3 path changes**: Update `artifacts_s3_path` in `s2aff/timo/config.yaml`
 
-**Purpose**: Cross-compiles the Rust extension for Linux x86_64 and uploads the wheel to AI2 PyPI.
+### Step 3: Update Version Numbers
 
-**Requirements**:
-- Docker
-- `TWINE_REPOSITORY_URL`, `TWINE_USERNAME`, `TWINE_PASSWORD` environment variables
+Update version in **all three files**:
 
-**What it does**:
-1. Cleans previous build artifacts (`target/wheels/`)
-2. Uses the official PyO3 maturin Docker image to cross-compile for Linux x86_64
-3. Builds manylinux wheels compatible with Python 3.11
-4. Installs/upgrades twine
-5. Uploads only the Linux manylinux wheel to AI2 PyPI
+1. **s2aff/pyproject.toml**
+   ```toml
+   [project]
+   version = "0.203"  # Update this
+   ```
 
-**Usage**:
+2. **s2aff_rust/pyproject.toml**
+   ```toml
+   [project]
+   version = "0.203"  # Update this
+   ```
+
+3. **s2aff_rust/Cargo.toml**
+   ```toml
+   [package]
+   version = "0.2.1"  # Update this
+   ```
+
+4. **Update Cargo.lock**
+   ```bash
+   cd s2aff_rust
+   cargo update
+   git add Cargo.lock
+   ```
+
+### Step 4: Build and Publish Packages
+
+**IMPORTANT**: Publish s2aff_rust **BEFORE** s2aff (dependency order).
+
+**Reference**: See [this branch](https://github.com/allenai/S2AFF/tree/add-rust-upgrade-version-0.2.1) for example upload scripts.
+
+#### Prepare Virtual Environments
+
+Create new virtual environments in both directories:
+
 ```bash
-# Set all required env vars (or source .env)
-export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-export TWINE_USERNAME="<username>"
-export TWINE_PASSWORD="<password>"
+# In s2aff_rust/
+cd s2aff_rust
+python3.11 -m venv .venv
+
+# In s2aff/ (repository root)
+cd ..
+python3.11 -m venv .venv
+```
+
+#### 4a. Build and Upload s2aff_rust (Linux wheels)
+
+```bash
+# Ensure env vars are set (see deployment document)
 cd s2aff_rust
 ./upload-linux.sh
 ```
 
-**Note**: This script is typically run from macOS to produce Linux wheels. Use the maturin Docker image to ensure compatibility with production Linux environments.
+**What this does**:
+- Uses Docker to cross-compile for Linux x86_64
+- Builds manylinux wheels for Python 3.11
+- Uploads wheel to AI2 PyPI
 
-## Deployment Workflow
-
-### Standard Release (macOS users)
-
-1. **Update version** in `pyproject.toml` and `s2aff_rust/Cargo.toml`
-2. **Build and upload Linux Rust extension**:
-   ```bash
-   cd s2aff_rust
-   ./upload-linux.sh
-   ```
-3. **Build and upload Python package**:
-   ```bash
-   # Set all required env vars (or source .env)
-   export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-   export TWINE_USERNAME="<username>"
-   export TWINE_PASSWORD="<password>"
-   ./upload.sh
-   ```
-
-### Linux Native Build
-
-If you're already on Linux x86_64, you can build natively instead of using Docker:
+#### 4b. Build and Upload s2aff
 
 ```bash
-# Set all required env vars (or source .env)
-export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-export TWINE_USERNAME="<username>"
-export TWINE_PASSWORD="<password>"
-
-cd s2aff_rust
-maturin build --release --manylinux 2014 -i python3.11
-twine upload target/wheels/*manylinux*.whl
+# From repository root
+./upload.sh
 ```
 
-## Troubleshooting
+**What this does**:
+- Cleans previous build artifacts
+- Builds Python package
+- Uploads to AI2 PyPI
 
-### Error: Environment variables must be set
+#### 4c. Clean Up PyPI Artifacts
 
-Make sure you've exported all required environment variables before running the scripts:
+**Delete the `.tar.gz` source distribution files** from PyPI (keep only `.whl` files):
 
 ```bash
-export TWINE_REPOSITORY_URL="<your-internal-pypi-url>"
-export TWINE_USERNAME="<username>"
-export TWINE_PASSWORD="<password>"
+# Example: delete s2aff-0.203.tar.gz
+# Do this via the PyPI web interface at https://pip.s2.allenai.org/
 ```
 
-Or source your `.env` file if you created one.
+### Step 5: Upload Config to TIMO Registry
 
-### Docker Issues
+```bash
+# Upload config YAML to S3 (modify version in path)
+aws s3 cp s2aff/timo/config.yaml \
+  s3://ai2-timo-registry/model-configs/s2aff/0.203.yaml
 
-If you encounter Docker-related errors with `upload-linux.sh`:
-- Ensure Docker is running
-- Verify you have access to `ghcr.io/pyo3/maturin` image
-- Check that the current directory is mounted correctly in the Docker command
+# Verify upload
+aws s3 ls s3://ai2-timo-registry/model-configs/s2aff/
+```
 
-### Upload Failures
+---
 
-If twine upload fails:
-- Verify you're connected to the AI2 network or VPN
-- Check that the package version doesn't already exist in the repository
-- Ensure the build artifacts were created successfully before upload
+## S2 Production Deployment Workflow
+
+### Step 6: Update TIMO Service Config
+
+Update the [TIMO config](https://github.com/allenai/timo/blob/main/timo_services/configs/s2aff_v2.py) to point to the new S2AFF version.
+
+**For existing endpoint (version bump)**:
+- Update version number in `timo_services/configs/s2aff_v2.py`
+- Submit PR and merge
+
+**For new endpoint (major version)**:
+- Create new config file (e.g., `s2aff_v3.py`)
+- Reference: [Example PR #355](https://github.com/allenai/timo/pull/355)
+
+### Step 7: Wait for TIMO CI
+
+The merged TIMO change must pass through TIMO CI. Monitor the build and ensure it succeeds.
+
+See the [deployment document](https://docs.google.com/document/d/1VoDK3e6PxAEqdvORcXKyeZdS7toiqIVZXbWJYiYdhh8/edit?usp=sharing) for CI links.
+
+### Step 8: Configure TeamCity Endpoints (new endpoint only)
+
+**If creating a new endpoint**, set up build and deploy pipelines:
+
+1. **Create Build Endpoint**
+   - Copy from existing endpoint (e.g., s2aff_v2 build)
+   - Update `config_name` parameter to new endpoint name
+   - Use `s2` user for permissions
+   - Update VCS branch if needed
+
+2. **Create Deploy Endpoint**
+   - Copy from existing endpoint (e.g., s2aff_v2 deploy)
+   - Update `config_name` parameter to new endpoint name
+   - Update VCS branch if needed
+
+3. **Validate Deployment**
+   - Run the TeamCity build and deploy pipelines for your endpoint and verify they pass.
+
+See the [deployment document](https://docs.google.com/document/d/1VoDK3e6PxAEqdvORcXKyeZdS7toiqIVZXbWJYiYdhh8/edit?usp=sharing) for TeamCity pipeline links.
+
+### Step 9: Update Scholar Repository (new endpoint only)
+
+**If you created a new endpoint**, update the scholar repository to point to it:
+
+Update these two config files:
+1. [PaperAuthorData/base.conf](https://github.com/allenai/scholar/blob/main/authors/src/main/resources/PaperAuthorData/base.conf#L36)
+2. [AltAuthorDisambiguation/base.conf](https://github.com/allenai/scholar/blob/main/authors/src/main/resources/AltAuthorDisambiguation/base.conf#L112)
+
+---
+
+**For detailed deployment document**: See [Google Doc](https://docs.google.com/document/d/1VoDK3e6PxAEqdvORcXKyeZdS7toiqIVZXbWJYiYdhh8/edit?usp=sharing)
