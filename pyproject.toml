@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s2aff"
-version = "0.202"
+version = "0.203"
 description = "Semantic Scholar's Affiliation Extraction: Link Your Raw Affiliations to ROR IDs"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,7 +29,7 @@ dependencies = [
   "pytest",
   "pytest-cov",
   "pyarrow<21",
-  "s2aff_rust==0.202",
+  "s2aff_rust==0.203",
   "setuptools==71.1.0",
 ]
 

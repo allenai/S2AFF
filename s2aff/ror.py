@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import re
 from collections import Counter, defaultdict
@@ -22,6 +23,8 @@ from s2aff.consts import (
 from s2aff.file_cache import cached_path
 from s2aff.model import parse_ner_prediction
 from s2aff.text import STOPWORDS, fix_text, INVERTED_ABBREVIATION_DICTIONARY, normalize_geoname_id
+
+logger = logging.getLogger("s2aff")
 
 ror_extractor = re.compile(r"(?:https?://)?ror\.org/(0[a-z0-9]{8})", re.I)
 grid_extractor = re.compile(r"(grid\.\d{4,6}\.[0-9a-f]{1,2})")
@@ -241,7 +244,7 @@ class RORIndex:
             for line in f:
                 line_json = json.loads(line)
                 if line_json["ror_id"] in self.ror_dict:
-                    print("Editing ROR database", line_json)
+                    logger.debug("Editing ROR database %s", line_json)
                     if line_json["action"] == "append":
                         if line_json["value"] not in self.ror_dict[line_json["ror_id"]][line_json["key"]]:
                             self.ror_dict[line_json["ror_id"]][line_json["key"]].append(line_json["value"])
