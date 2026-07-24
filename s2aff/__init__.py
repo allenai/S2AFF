@@ -6,11 +6,11 @@ from s2aff.model import parse_ner_prediction
 from s2aff.rust_backend import rust_available
 
 logger = logging.getLogger("s2aff")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 ch = logging.StreamHandler()
 ch.setFormatter(formatter)
-ch.setLevel(logging.INFO)
+ch.setLevel(logging.WARNING)
 logger.addHandler(ch)
 
 
@@ -113,9 +113,9 @@ class S2AFF:
         if isinstance(raw_affiliations, str):
             raw_affiliations = [raw_affiliations]
 
-        print("Getting NER predictions in bulk...")
+        logger.debug("Getting NER predictions in bulk...")
         ner_predictions = self.ner_predictor.predict(raw_affiliations)
-        print("Done")
+        logger.debug("Done")
 
         batch_rerank = None
         if self.stage2_pipeline == "rust" and hasattr(
@@ -132,9 +132,11 @@ class S2AFF:
             batch_indices = []
 
             for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
-                print(
-                    f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
-                    end="\r",
+                logger.debug(
+                    "Getting ROR candidates and reranking for: '%s' (%d/%d)",
+                    raw_affiliation,
+                    counter + 1,
+                    len(raw_affiliations),
                 )
                 main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
                 # sometimes the affiliation strings just contain GRID, ISNI, or ROR ids directly
@@ -282,9 +284,11 @@ class S2AFF:
 
         outputs = []
         for counter, (raw_affiliation, ner_prediction) in enumerate(zip(raw_affiliations, ner_predictions)):
-            print(
-                f"Getting ROR candidates and reranking for: '{raw_affiliation}' ({counter+1}/{len(raw_affiliations)})",
-                end="\r",
+            logger.debug(
+                "Getting ROR candidates and reranking for: '%s' (%d/%d)",
+                raw_affiliation,
+                counter + 1,
+                len(raw_affiliations),
             )
             main, child, address, early_candidates = parse_ner_prediction(ner_prediction, self.ror_index)
             # sometimes the affiliation strings just contain GRID, ISNI, or ROR ids directly

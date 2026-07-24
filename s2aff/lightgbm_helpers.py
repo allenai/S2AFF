@@ -4,12 +4,15 @@ Created on Tue May 29 12:35:14 2018
 @author: serge
 """
 
+import logging
 import time
 from abc import ABCMeta, abstractmethod
 from itertools import groupby
 import numpy as np
 import lightgbm as lgb
 from hyperopt import hp, fmin, tpe, Trials, STATUS_OK, STATUS_FAIL
+
+logger = logging.getLogger("s2aff")
 
 
 def format_group(g):
@@ -53,15 +56,15 @@ class Experiment(object, metaclass=ABCMeta):
         cv_result.update({"hyperopt_eval_num": self.hyperopt_eval_num, "best_loss": self.best_loss})
 
         if verbose:
-            print(
-                "[{0}/{1}]\teval_time={2:.2f} sec\tcurrent_{3}={4:.6f}\tmin_{3}={5:.6f}".format(
-                    self.hyperopt_eval_num,
-                    self.hyperopt_evals,
-                    eval_time,
-                    self.eval_metric,
-                    cv_result["loss"],
-                    self.best_loss,
-                )
+            logger.debug(
+                "[%d/%d]\teval_time=%.2f sec\tcurrent_%s=%.6f\tmin_%s=%.6f",
+                self.hyperopt_eval_num,
+                self.hyperopt_evals,
+                eval_time,
+                self.eval_metric,
+                cv_result["loss"],
+                self.eval_metric,
+                self.best_loss,
             )
         return cv_result
 
@@ -99,25 +102,28 @@ class Experiment(object, metaclass=ABCMeta):
         group_test,
         weights_test,
     ):
-        print("Loading and preprocessing dataset...")
+        logger.info("Loading and preprocessing dataset...")
         train_dmatrix = self.convert_data(X_train, y_train, group_train, weights_train)
         val_dmatrix = self.convert_data(X_val, y_val, group_val, weights_val)
         test_dmatrix = self.convert_data(X_test, y_test, group_test, weights_test)
 
-        print("Optimizing params...")
+        logger.info("Optimizing params...")
         cv_result = self.optimize_params(train_dmatrix, val_dmatrix)
-        self.print_result(cv_result, "\nBest result on cv")
+        self.print_result(cv_result, "Best result on cv")
 
-        print("\nTraining algorithm with the tuned parameters for different seeds...")
+        logger.info("Training algorithm with the tuned parameters for different seeds...")
         test_losses = []
         for seed in [42, 1999, self.random_seed]:
             test_result = self.run_test(train_dmatrix, test_dmatrix, seed=seed)
             test_losses.append(test_result["loss"])
-            print("For seed=%d Test's %s : %.5f" % (seed, self.eval_metric, test_losses[-1]))
+            logger.debug("For seed=%d Test's %s : %.5f", seed, self.eval_metric, test_losses[-1])
 
-        print(
-            "\nTest's %s mean: %.5f, Test's %s std: %.5f"
-            % (self.eval_metric, np.mean(test_losses), self.eval_metric, np.std(test_losses))
+        logger.info(
+            "Test's %s mean: %.5f, Test's %s std: %.5f",
+            self.eval_metric,
+            np.mean(test_losses),
+            self.eval_metric,
+            np.std(test_losses),
         )
 
         return test_losses
@@ -141,17 +147,17 @@ class Experiment(object, metaclass=ABCMeta):
         return self.trials.best_trial["result"]
 
     def print_result(self, result, name="", extra_keys=None):
-        print("%s:\n" % name)
-        print("%s = %s" % (self.eval_metric, result["loss"]))
+        logger.info("%s:", name)
+        logger.info("%s = %s", self.eval_metric, result["loss"])
         if "best_n_estimators" in result.keys():
-            print("best_n_estimators = %s" % result["best_n_estimators"])
+            logger.info("best_n_estimators = %s", result["best_n_estimators"])
         elif "n_estimators" in result.keys():
-            print("n_estimators = %s" % result["n_estimators"])
-        print("params = %s" % result["params"])
+            logger.info("n_estimators = %s", result["n_estimators"])
+        logger.info("params = %s", result["params"])
         if extra_keys is not None:
             for k in extra_keys:
                 if k in result:
-                    print("%s = %f" % (k, result[k]))
+                    logger.info("%s = %f", k, result[k])
 
 
 class lightgbmExperiment(Experiment):

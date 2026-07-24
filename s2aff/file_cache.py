@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import tempfile
@@ -9,6 +10,7 @@ from typing import Tuple, Union, IO
 from hashlib import sha256
 from s2aff.consts import CACHE_ROOT
 
+logger = logging.getLogger("s2aff")
 
 ARTIFACTS_CACHE = str(CACHE_ROOT / "artifacts")
 
@@ -119,7 +121,7 @@ def get_from_cache(url: str, cache_dir: str = None) -> str:
         # Download to temporary file, then copy to cache dir once finished.
         # Otherwise you get corrupt cache entries if the download gets interrupted.
         with tempfile.NamedTemporaryFile() as temp_file:  # type: IO
-            print(f"{url} not found in cache, downloading to {temp_file.name}")
+            logger.info("%s not found in cache, downloading to %s", url, temp_file.name)
 
             # GET file object
             http_get(url, temp_file)
@@ -129,7 +131,7 @@ def get_from_cache(url: str, cache_dir: str = None) -> str:
             # shutil.copyfileobj() starts at the current position, so go to the start
             temp_file.seek(0)
 
-            print(f"Finished download, copying {temp_file.name} to cache at {cache_path}")
+            logger.info("Finished download, copying %s to cache at %s", temp_file.name, cache_path)
             with open(cache_path, "wb") as cache_file:
                 shutil.copyfileobj(temp_file, cache_file)
 
